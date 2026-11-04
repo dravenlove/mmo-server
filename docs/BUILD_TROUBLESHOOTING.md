@@ -13,6 +13,8 @@
 
 现场曾出现：基础镜像约 1.8 秒完成、上下文约 0.1 秒完成，`apt-get` 安装编译工具约 3060 秒仍在输出软件包下载记录。这定位到软件包下载/安装阶段，尚未进入 C++ 编译；不能据此判定另一台 Go 机器也停在相同步骤。
 
+另一份现场日志中，Backend、Gateway 已经完成 `exporting` 和 `unpacking to mmo/…:dev`，但同一构建仍在等待 `scene2` 的 apt 下载（约 4401 秒）。这说明构建列表包含 Go 与场景服务，而不是 Go 编译未完成。按两机方案，A 的配置只应包含 `backend`、`gateway`；根目录 Compose 是四服务同机演示配置。
+
 ## 1. 从 VPS 比较软件源
 
 在构建机器的另一个 SSH 终端执行下面的只读下载测试。它只下载并丢弃仓库索引，不安装软件，也不改系统配置：
@@ -61,6 +63,14 @@ sudo docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compos
 ```
 
 ### A：Ubuntu 网关与业务机
+
+如果日志显示两个 Go 镜像已导出，只剩场景构建，A 可以中断这次不需要的场景构建。中断构建不会删除已经导出的镜像；先核对镜像是否存在：
+
+```bash
+sudo docker image inspect mmo/backend:dev mmo/gateway:dev --format '{{json .RepoTags}}'
+```
+
+上例与当前 `MMO_IMAGE_TAG=dev` 对应；修改过标签时用实际标签。两个镜像都存在且版本与本次部署一致时，A 不必再次构建，配置好 A 的 env 并等 B 健康后，直接执行本节的 `up --no-build`。新的换源参数只影响后续构建。
 
 如果 A 的日志同样停在 `apt-get`，在 `deploy/two-host-a.env` 中设置它实测更快的 `DEBIAN_MIRROR`。如果停在 Go 模块下载，则需要另行选择可访问的 Go 模块代理，并设置 `GOPROXY`；默认是 `https://proxy.golang.org,direct`。这项设置不关闭 `go.sum` 或校验数据库验证，参见 [Go 模块环境变量说明](https://go.dev/ref/mod#environment-variables)。
 

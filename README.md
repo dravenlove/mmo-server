@@ -26,6 +26,8 @@ flowchart LR
 
 ## 本机启动
 
+本节会在**同一台机器**上构建并运行全部四个服务。Ubuntu + OpenCloudOS 两台 VPS 部署时，直接使用 [两机部署文档](docs/DEPLOYMENT_TWO_HOSTS.md) 的 A/B 配置；Ubuntu 的构建列表应只有 Backend、Gateway，OpenCloudOS 应只有两个场景。
+
 以下命令使用 Linux shell，要求 Docker Engine 运行中、支持 `docker compose`，并能拉取镜像、系统软件包和 Go 依赖。C++ 第三方头文件已随源码提供，构建场景时不再下载第三方源码。
 
 ```bash
