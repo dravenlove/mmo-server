@@ -1,0 +1,4 @@
+# Linux 容器、shell 与 Windows 开发环境共用一致的文本换行。
+* text=auto eol=lf
+# 保留第三方源码及许可证的原始空白；哈希见 third_party/README.md。
+third_party/** -whitespace

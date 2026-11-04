@@ -1,0 +1,29 @@
+services:
+  backend:
+    image: mmo/backend:${MMO_IMAGE_TAG:-dev}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 20s
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set the shared random INTERNAL_TOKEN}
+      BACKEND_LISTEN: 0.0.0.0:8081
+      BACKEND_DB: /app/data/mmo.db
+      SCENES: ${SCENES:?Set reachable private URLs for scene-1 and scene-2}
+    ports:
+      - "${BACKEND_BIND_IP:-127.0.0.1}:8081:8081"
+    volumes:
+      - backend-data:/app/data
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", "http://127.0.0.1:8081/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  backend-data:
+    name: ${BACKEND_VOLUME_NAME:-mmo-backend-data}

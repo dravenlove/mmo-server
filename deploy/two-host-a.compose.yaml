@@ -1,0 +1,65 @@
+x-runtime: &runtime
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: ["/tmp:size=16m,mode=1777"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  stop_grace_period: 20s
+
+services:
+  backend:
+    <<: *runtime
+    image: mmo/backend:${MMO_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: Dockerfile.golang
+      args:
+        SERVICE: backend
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set the shared random INTERNAL_TOKEN}
+      BACKEND_LISTEN: 0.0.0.0:8081
+      BACKEND_DB: /app/data/mmo.db
+      SCENES: scene-1=http://${SCENE_HOST_IP:?Set host B private or VPN IP}:9001,scene-2=http://${SCENE_HOST_IP:?Set host B private or VPN IP}:9002
+    volumes:
+      - backend-data:/app/data
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", "http://127.0.0.1:8081/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  gateway:
+    <<: *runtime
+    image: mmo/gateway:${MMO_IMAGE_TAG:-dev}
+    build:
+      context: ..
+      dockerfile: Dockerfile.golang
+      args:
+        SERVICE: gateway
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set the shared random INTERNAL_TOKEN}
+      BACKEND_URL: http://backend:8081
+      GATEWAY_LISTEN: 0.0.0.0:7000
+      GATEWAY_HEALTH_LISTEN: 0.0.0.0:8080
+      TLS_CERT_FILE: ${TLS_CERT_FILE:-}
+      TLS_KEY_FILE: ${TLS_KEY_FILE:-}
+    ports:
+      - "${GATEWAY_BIND_IP:-127.0.0.1}:7000:7000"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ${TLS_CERT_DIR:-./certs}:/certs:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  backend-data:
+    name: ${BACKEND_VOLUME_NAME:-mmo-two-host-backend-data}

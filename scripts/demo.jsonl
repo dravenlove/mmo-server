@@ -1,0 +1,8 @@
+{"op":"view"}
+{"op":"move","dx":1,"dy":0}
+{"op":"sleep","ms":400}
+{"op":"view"}
+{"op":"claim"}
+{"op":"claim"}
+{"op":"transfer","target_scene_id":"scene-2","request_id":"demo-transfer-1"}
+{"op":"view"}
