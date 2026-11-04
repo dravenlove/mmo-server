@@ -4,6 +4,8 @@
 
 公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。Ubuntu 24.04.4 LTS + OpenCloudOS 9.6 两台 VPS 从零安装、克隆和更新，先看 [GitHub 与 VPS 操作指南](docs/GITHUB_VPS.md)，再按 [两机部署步骤](docs/DEPLOYMENT_TWO_HOSTS.md) 启动。
 
+VPS 配置较小时，可使用 [本机构建镜像、VPS 加载运行](docs/PREBUILT_IMAGES.md)：在开发机打好 A/B 两个镜像包，服务器执行 `docker load` 后以 `--no-build --pull never` 启动。
+
 ```bash
 git clone https://github.com/dravenlove/mmo-server.git
 cd mmo-server

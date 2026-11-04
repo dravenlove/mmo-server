@@ -161,4 +161,6 @@ docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compose.yam
 
 两机配置支持现场构建。若已在构建机生成镜像，可以依照通用部署文档 `docker image save/load` 分发：A 需要 `mmo/backend` 和 `mmo/gateway`，B 需要 `mmo/scene`；已加载相同标签后使用 `up -d --no-build --wait`。
 
+2 核 2 GB VPS 建议将构建移到开发机，按 [预构建镜像操作指南](PREBUILT_IMAGES.md) 生成两份压缩镜像包。服务器仍保留自己的 env 和数据库，只加载相应镜像并启动容器。
+
 本次新增两机配置通过 Compose 展开与字段检查。Linux Docker 容器启动及两台真实主机互联仍需在你的环境验收；既有 MVP 的验证与容量限制见 [验证记录](VALIDATION.md) 和 [通用部署文档](DEPLOYMENT.md#8-故障排查与当前边界)。

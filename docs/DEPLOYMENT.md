@@ -53,7 +53,7 @@ docker image save -o mmo-client.tar mmo/client:dev
 docker image load -i mmo-scene.tar
 ```
 
-把 `deploy/` 配置文件传到目标主机即可，镜像运行不要求保留 Go/C++ 编译工具或完整源码。多机模板没有 `build` 字段，直接启动已加载或仓库可拉取的镜像。
+把 `deploy/` 配置文件传到目标主机即可，镜像运行不要求保留 Go/C++ 编译工具或完整源码。独立 Backend/Gateway/Scene 模板没有 `build` 字段；两机 A/B 模板包含构建配置，使用预构建镜像时明确加 `--no-build --pull never`。自动打包与上传步骤见 [预构建镜像操作指南](PREBUILT_IMAGES.md)。
 
 ## 3. 准备配置
 
