@@ -125,6 +125,8 @@ docker compose up -d --wait
 
 ## 本机开发验证
 
+Windows 本机断点调试见 [LOCAL_DEBUG.md](docs/LOCAL_DEBUG.md)：已提供 VS Code 四进程启动配置、Debug 构建和独立的调试数据目录。准备一次后选择 `MMO: all services (Windows)` 按 F5，即可在 Go 与 C++ 代码中设置断点。
+
 Windows 需要 Go、CMake、Visual Studio 2022 的 C++ 编译工具和 Python 3。在项目根目录的 PowerShell 中执行：
 
 ```powershell

@@ -9,9 +9,11 @@ root = Path(__file__).resolve().parent.parent
 files = [root / name for name in (
     "README.md", "ARCHITECTURE.md", "go.mod", "go.sum", ".gitignore",
     ".dockerignore", ".gitattributes", ".env.example", "Dockerfile.golang", "Dockerfile.scene", "compose.yaml",
+    ".vscode/extensions.json", ".vscode/launch.json", ".vscode/tasks.json",
 )]
 for directory in ("cmd", "internal", "scene/src", "scene/tests", "scripts", "docs", "third_party"):
-    files.extend(p for p in (root / directory).rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+    files.extend(p for p in (root / directory).rglob("*")
+                 if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("__debug_bin"))
 files.append(root / "scene/CMakeLists.txt")
 files.extend(p for p in (root / "deploy").iterdir() if p.is_file() and (p.name.endswith(".compose.yaml") or p.name.endswith(".env.example")))
 files = sorted(set(files), key=lambda p: p.relative_to(root).as_posix())

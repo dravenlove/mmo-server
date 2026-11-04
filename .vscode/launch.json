@@ -1,0 +1,86 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "MMO: Scene 1 (C++)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/debug/scene-server.exe",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/build/local-debug.env",
+      "environment": [
+        { "name": "SCENE_ID", "value": "scene-1" },
+        { "name": "SCENE_HOST", "value": "127.0.0.1" },
+        { "name": "SCENE_PORT", "value": "9001" },
+        { "name": "TICK_HZ", "value": "20" },
+        { "name": "AOI_RADIUS", "value": "30" },
+        { "name": "MOVE_SPEED", "value": "6" }
+      ],
+      "console": "internalConsole",
+      "stopAtEntry": false
+    },
+    {
+      "name": "MMO: Scene 2 (C++)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/debug/scene-server.exe",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/build/local-debug.env",
+      "environment": [
+        { "name": "SCENE_ID", "value": "scene-2" },
+        { "name": "SCENE_HOST", "value": "127.0.0.1" },
+        { "name": "SCENE_PORT", "value": "9002" },
+        { "name": "TICK_HZ", "value": "20" },
+        { "name": "AOI_RADIUS", "value": "30" },
+        { "name": "MOVE_SPEED", "value": "6" }
+      ],
+      "console": "internalConsole",
+      "stopAtEntry": false
+    },
+    {
+      "name": "MMO: Backend (Go)",
+      "type": "go",
+      "request": "launch",
+      "mode": "exec",
+      "program": "${workspaceFolder}/bin/debug/backend.exe",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/build/local-debug.env",
+      "env": {
+        "BACKEND_LISTEN": "127.0.0.1:8081",
+        "BACKEND_DB": "${workspaceFolder}/data/local-debug/mmo.db",
+        "SCENES": "scene-1=http://127.0.0.1:9001,scene-2=http://127.0.0.1:9002"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "name": "MMO: Gateway (Go)",
+      "type": "go",
+      "request": "launch",
+      "mode": "exec",
+      "program": "${workspaceFolder}/bin/debug/gateway.exe",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/build/local-debug.env",
+      "env": {
+        "GATEWAY_LISTEN": "127.0.0.1:7000",
+        "GATEWAY_HEALTH_LISTEN": "127.0.0.1:18080",
+        "BACKEND_URL": "http://127.0.0.1:8081",
+        "TLS_CERT_FILE": "",
+        "TLS_KEY_FILE": ""
+      },
+      "console": "internalConsole"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "MMO: all services (Windows)",
+      "configurations": [
+        "MMO: Scene 1 (C++)",
+        "MMO: Scene 2 (C++)",
+        "MMO: Backend (Go)",
+        "MMO: Gateway (Go)"
+      ],
+      "preLaunchTask": "MMO: prepare debug",
+      "stopAll": true
+    }
+  ]
+}
