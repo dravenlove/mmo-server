@@ -64,13 +64,22 @@ sudo docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compos
 
 ### A：Ubuntu 网关与业务机
 
-如果日志显示两个 Go 镜像已导出，只剩场景构建，A 可以中断这次不需要的场景构建。中断构建不会删除已经导出的镜像；先核对镜像是否存在：
+日志出现 `exporting`、`naming` 或 `unpacking`，不足以证明当前 Docker 引擎中已有可复用的镜像。A 可以中断这次不需要的场景构建，但是否能跳过 Go 构建，应以同一台机器、同一个 Docker 引擎上的镜像检查结果为准：
 
 ```bash
 sudo docker image inspect mmo/backend:dev mmo/gateway:dev --format '{{json .RepoTags}}'
 ```
 
 上例与当前 `MMO_IMAGE_TAG=dev` 对应；修改过标签时用实际标签。两个镜像都存在且版本与本次部署一致时，A 不必再次构建，配置好 A 的 env 并等 B 健康后，直接执行本节的 `up --no-build`。新的换源参数只影响后续构建。
+
+若返回 `No such image`，先核对检查命令与先前构建是否在同一台 VPS、使用同一个 Docker 引擎。普通用户和 `sudo` 可能因各自的 context 或 Rootless 配置连接不同引擎，不能仅凭是否带 `sudo` 判定。可比较下面输出中的引擎 ID；这些命令不修改配置：[Docker context 说明](https://docs.docker.com/engine/manage-resources/contexts/)。
+
+```bash
+docker info --format 'name={{.Name}} id={{.ID}}'
+sudo docker info --format 'name={{.Name}} id={{.ID}}'
+```
+
+如果镜像存在于预期的另一个引擎，后续检查、构建与运行统一使用那个引擎。如果目标引擎确实没有镜像，先完成下方 A 的构建，成功后重新检查镜像，再使用 `up --no-build`；不要反复尝试启动不存在的本地镜像。A 的构建只包含 Backend 和 Gateway，不需要等待 C++ 场景。
 
 如果 A 的日志同样停在 `apt-get`，在 `deploy/two-host-a.env` 中设置它实测更快的 `DEBIAN_MIRROR`。如果停在 Go 模块下载，则需要另行选择可访问的 Go 模块代理，并设置 `GOPROXY`；默认是 `https://proxy.golang.org,direct`。这项设置不关闭 `go.sum` 或校验数据库验证，参见 [Go 模块环境变量说明](https://go.dev/ref/mod#environment-variables)。
 
