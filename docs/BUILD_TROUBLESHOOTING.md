@@ -124,4 +124,4 @@ vmstat 1 5
 - `DEBIAN_MIRROR` 作用于所有使用 apt 的构建/运行阶段；根 Compose 与两机 Compose 都传递该参数，默认仍为 `deb.debian.org`。
 - 该参数保留基础镜像原有的 HTTP 软件源形式和 Debian `Signed-By` 签名校验。精简镜像尚未安装 CA 时，直接切换 HTTPS 源可能无法验证证书；不要通过关闭签名或证书校验绕过错误。[清华镜像引导说明](https://mirrors.tuna.tsinghua.edu.cn/help/debian/)
 - APT 增加了两次重试以及 HTTP/HTTPS 的 30 秒连接/数据等待超时；这是网络等待超时，不是整个构建的总时限。持续有少量数据的慢连接仍可能耗时很久。[APT 网络配置](https://manpages.debian.org/bookworm/apt/apt.conf.5.en.html)
-- 本次本机环境仍无可用 Docker daemon。配置展开和 shell 逻辑可以验证，但镜像构建耗时及 VPS 换源效果必须在目标机器验收。
+- 本机 Docker Desktop 恢复后已使用中科大源完成四个 Linux 镜像的实际构建及容器验证；VPS 网络和换源效果仍需在目标机器验收。小配置 VPS 可以直接使用 [本机构建的镜像包](PREBUILT_IMAGES.md)，避免在目标机编译。

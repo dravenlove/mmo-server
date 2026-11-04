@@ -32,6 +32,18 @@ python scripts/package_images.py --tag mvp-20261104 --platform linux/amd64 --deb
 
 镜像源按构建机实际网络选择；官方源可省略 `--debian-mirror`。Go 模块访问慢时可指定 `--goproxy`。脚本不依赖任何实际 `.env` 文件，不需要 VPS 地址或内部密钥。它会依次构建四个镜像，检查镜像已加载到当前 Docker 引擎，并核对目标架构后导出压缩包。
 
+如果 Windows 已有 HTTP 代理，而构建仍在 `auth.docker.io/token` 超时，先确认 Docker Desktop 的代理配置，再在执行脚本的同一个 PowerShell 中显式设置构建工具使用的代理。下面的 `10809` 只是示例，必须与本机代理软件的 **HTTP 端口**一致：
+
+```powershell
+$env:HTTP_PROXY = 'http://127.0.0.1:10809'
+$env:HTTPS_PROXY = 'http://127.0.0.1:10809'
+python scripts/package_images.py --tag mvp-20261104 --platform linux/amd64 --debian-mirror mirrors.ustc.edu.cn
+```
+
+这里的 `HTTPS_PROXY` 也使用 `http://`，表示通过 HTTP 代理建立 HTTPS 隧道。变量仅作用于当前终端及它启动的进程，不需要放进 VPS 的 env 文件。Docker Desktop 的镜像下载代理与构建工具的认证请求都需可达，具体设置见 [Docker 代理说明](https://docs.docker.com/desktop/settings-and-maintenance/settings/#proxies)。
+
+若 Desktop 窗口已打开，但 `docker version` 没有 Server 信息或持续返回 `_ping` / `version` 的 500 错误，先恢复引擎再打包。本次旧版 Desktop 曾在自动暂停后无法恢复；暂时关闭 Settings → Resources → Resource Saver 并重启 Desktop 后恢复。这个现象不等于 Go/C++ 编译错误，相关机制见 [Resource Saver 文档](https://docs.docker.com/desktop/use-desktop/resource-saver/)。
+
 输出目录：
 
 ```text

@@ -159,6 +159,6 @@ python3 scripts/smoke.py
 
 Windows 原生四进程端到端 smoke 已通过 15/15 项，Go 测试与静态检查通过，C++ CTest 通过 2/2 项；TLS 入口通过可信证书与不可信证书测试。三个 Go 程序也已完成 Linux amd64 交叉编译。详细范围见 [验证记录](docs/VALIDATION.md)。
 
-Docker Engine 在当前环境不可用，因此 Docker 镜像构建、容器启动和跨 Linux 主机联通尚未实测；现有 WSL 的编译工具过旧，C++ Linux 编译也尚未执行。七份 Compose 环境配置展开已通过（包含两机 A/B 配置），但它只检查配置结构与变量展开；运行验收仍需在实际 Linux Docker 环境执行上面的健康检查与客户端流程。
+本机 Docker Desktop 已完成四个 `linux/amd64` 镜像的构建、A/B 两包导出和重新加载，包含 C++ 的 Linux 编译。隔离环境的 Docker 端到端验证通过 8/8 项，覆盖登录、移动、奖励、跨场景迁移、CLI 凭据卷和全部容器重启后的持久化恢复。七份 Compose 配置展开通过（包含两机 A/B 配置）；两台真实 VPS 的私网联通、云防火墙、实际 TLS 证书挂载与容量仍需现场验收。
 
 运行 `python scripts/package.py` 可生成 `dist/mmo-mvp-source.zip` 与 SHA-256 校验文件。源码包只包含明确列出的源码、依赖、测试和部署资料，不含数据库、实际环境变量文件、玩家凭据、编译产物及测试日志。
