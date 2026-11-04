@@ -1,6 +1,6 @@
 services:
   gateway:
-    image: mmo/gateway:${MMO_IMAGE_TAG:-dev}
+    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_IMAGE_TAG:-dev}
     restart: unless-stopped
     init: true
     read_only: true

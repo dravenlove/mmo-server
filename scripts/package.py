@@ -10,6 +10,7 @@ files = [root / name for name in (
     "README.md", "ARCHITECTURE.md", "go.mod", "go.sum", ".gitignore",
     ".dockerignore", ".gitattributes", ".env.example", "Dockerfile.golang", "Dockerfile.scene", "compose.yaml",
     ".vscode/extensions.json", ".vscode/launch.json", ".vscode/tasks.json",
+    ".github/workflows/publish-images.yaml",
 )]
 for directory in ("cmd", "internal", "scene/src", "scene/tests", "scripts", "docs", "third_party"):
     files.extend(p for p in (root / directory).rglob("*")

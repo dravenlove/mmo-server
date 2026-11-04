@@ -1,0 +1,70 @@
+name: Publish Linux images
+run-name: Publish Linux images ${{ inputs.image_tag || github.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 镜像版本；留空使用 sha-提交号，发布新版本时使用新标签
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-linux-images
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select image names
+        env:
+          REQUESTED_TAG: ${{ inputs.image_tag }}
+        run: |
+          tag="${REQUESTED_TAG:-sha-${GITHUB_SHA:0:12}}"
+          if [[ ! "$tag" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            printf '::error::Invalid Docker image tag\n'
+            exit 2
+          fi
+          printf 'IMAGE_TAG=%s\nIMAGE_PREFIX=ghcr.io/%s\n' \
+            "$tag" "${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Build and verify Linux image packages
+        run: python3 scripts/package_images.py --tag "$IMAGE_TAG" --platform linux/amd64
+
+      - name: Verify containers and persistent volumes
+        run: python3 scripts/smoke_docker.py --tag "$IMAGE_TAG"
+
+      - name: Sign in to GitHub Container Registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publish four images
+        run: |
+          printf '| Service | Image |\n| --- | --- |\n' >> "$GITHUB_STEP_SUMMARY"
+          for service in backend gateway client scene; do
+            image="$IMAGE_PREFIX/$service:$IMAGE_TAG"
+            docker tag "mmo/$service:$IMAGE_TAG" "$image"
+            docker push "$image"
+            printf '| %s | `%s` |\n' "$service" "$image" >> "$GITHUB_STEP_SUMMARY"
+          done
+          printf '\nFirst publication: check package visibility before anonymous VPS pulls.\n' \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sign out
+        if: always()
+        run: docker logout ghcr.io

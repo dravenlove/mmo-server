@@ -90,8 +90,11 @@ sudo docker image inspect mmo/scene:mvp-20261104 --format '{{json .RepoTags}} {{
 镜像包不包含运行密钥、数据库或玩家凭据。已有实际 env 文件继续保留，只把两台文件中的版本改为包的实际标签：
 
 ```dotenv
+MMO_IMAGE_PREFIX=mmo
 MMO_IMAGE_TAG=mvp-20261104
 ```
+
+离线包中的镜像名以 `mmo/` 开头，因此这里使用 `MMO_IMAGE_PREFIX=mmo`；若选择 [网上镜像拉取](REGISTRY_DEPLOYMENT.md)，改用对应的仓库前缀。
 
 如果 env 文件不存在，先从相应模板创建并按 [两机部署文档](DEPLOYMENT_TWO_HOSTS.md) 填写。不要把模板中的示例 IP 当作自己的地址：
 

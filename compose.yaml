@@ -13,7 +13,7 @@ x-runtime: &runtime
 
 x-scene: &scene
   <<: *runtime
-  image: mmo/scene:${MMO_IMAGE_TAG:-dev}
+  image: ${MMO_IMAGE_PREFIX:-mmo}/scene:${MMO_IMAGE_TAG:-dev}
   build:
     context: .
     dockerfile: Dockerfile.scene
@@ -55,7 +55,7 @@ services:
 
   backend:
     <<: *runtime
-    image: mmo/backend:${MMO_IMAGE_TAG:-dev}
+    image: ${MMO_IMAGE_PREFIX:-mmo}/backend:${MMO_IMAGE_TAG:-dev}
     build:
       context: .
       dockerfile: Dockerfile.golang
@@ -86,7 +86,7 @@ services:
 
   gateway:
     <<: *runtime
-    image: mmo/gateway:${MMO_IMAGE_TAG:-dev}
+    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_IMAGE_TAG:-dev}
     build:
       context: .
       dockerfile: Dockerfile.golang

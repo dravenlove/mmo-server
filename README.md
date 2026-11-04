@@ -6,6 +6,8 @@
 
 VPS 配置较小时，可使用 [本机构建镜像、VPS 加载运行](docs/PREBUILT_IMAGES.md)：在开发机打好 A/B 两个镜像包，服务器执行 `docker load` 后以 `--no-build --pull never` 启动。
 
+也可以使用 [网上镜像仓库部署](docs/REGISTRY_DEPLOYMENT.md)：GitHub Actions 构建、验收后发布到 GHCR，VPS 直接 `docker compose pull`，不需要上传压缩包。
+
 ```bash
 git clone https://github.com/dravenlove/mmo-server.git
 cd mmo-server
