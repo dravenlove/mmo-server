@@ -36,6 +36,8 @@ Go 构建使用 `golang:1.26-bookworm`、`CGO_ENABLED=0`；可通过 `--build-ar
 
 首次构建仍会拉取基础镜像、系统软件包和 Go 模块，因此不是完全离线构建。当前镜像标签用于演示；正式交付应将版本标记替换为自己的固定发布版本，并记录镜像摘要。构建架构应与目标服务器一致；将 amd64 镜像直接发到 arm64 服务器不构成可用部署。
 
+如果构建长时间停在 `apt-get`、`go mod download` 或镜像下载，先按 [构建慢的排查步骤](BUILD_TROUBLESHOOTING.md) 区分网络来源。Dockerfile 支持 `--build-arg DEBIAN_MIRROR=域名`，Go 构建另支持 `--build-arg GOPROXY=代理地址`；根 Compose 和两机 Compose 可通过各自 env 文件保存这些选项。
+
 通过仓库分发，或保存后复制到对应目标主机：
 
 ```bash

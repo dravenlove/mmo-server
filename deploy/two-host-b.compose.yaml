@@ -3,6 +3,8 @@ x-scene: &scene
   build:
     context: ..
     dockerfile: Dockerfile.scene
+    args:
+      DEBIAN_MIRROR: ${DEBIAN_MIRROR:-deb.debian.org}
   restart: unless-stopped
   init: true
   read_only: true

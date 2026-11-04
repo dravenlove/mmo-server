@@ -17,6 +17,8 @@ x-scene: &scene
   build:
     context: .
     dockerfile: Dockerfile.scene
+    args:
+      DEBIAN_MIRROR: ${DEBIAN_MIRROR:-deb.debian.org}
   healthcheck:
     test: [CMD-SHELL, 'curl --fail --silent --max-time 2 "http://127.0.0.1:$$SCENE_PORT/healthz" >/dev/null']
     interval: 5s
@@ -59,6 +61,8 @@ services:
       dockerfile: Dockerfile.golang
       args:
         SERVICE: backend
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-deb.debian.org}
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     environment:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set a random INTERNAL_TOKEN of at least 32 characters in .env}
       BACKEND_LISTEN: 0.0.0.0:8081
@@ -88,6 +92,8 @@ services:
       dockerfile: Dockerfile.golang
       args:
         SERVICE: gateway
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-deb.debian.org}
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     environment:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set a random INTERNAL_TOKEN of at least 32 characters in .env}
       BACKEND_URL: http://backend:8081

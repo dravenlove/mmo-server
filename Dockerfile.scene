@@ -1,5 +1,9 @@
 FROM debian:bookworm-slim AS build
-RUN apt-get update \
+ARG DEBIAN_MIRROR=deb.debian.org
+RUN case "$DEBIAN_MIRROR" in ""|*[!a-zA-Z0-9.-]*) echo 'DEBIAN_MIRROR must be a hostname' >&2; exit 2;; esac \
+    && sed -i "s|deb\.debian\.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && printf 'Acquire::Retries "2";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/80-build-network \
+    && apt-get -o APT::Update::Error-Mode=any update \
     && apt-get install -y --no-install-recommends build-essential cmake ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
@@ -9,7 +13,11 @@ RUN cmake -S scene -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
     && cmake --build build --config Release --parallel 2
 
 FROM debian:bookworm-slim AS runtime
-RUN apt-get update \
+ARG DEBIAN_MIRROR=deb.debian.org
+RUN case "$DEBIAN_MIRROR" in ""|*[!a-zA-Z0-9.-]*) echo 'DEBIAN_MIRROR must be a hostname' >&2; exit 2;; esac \
+    && sed -i "s|deb\.debian\.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && printf 'Acquire::Retries "2";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/80-build-network \
+    && apt-get -o APT::Update::Error-Mode=any update \
     && apt-get install -y --no-install-recommends libstdc++6 libgcc-s1 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

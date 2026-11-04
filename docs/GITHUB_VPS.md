@@ -83,6 +83,8 @@ sudo docker run --rm hello-world
 
 确认 Docker 显示客户端和服务端版本，Compose 帮助包含 `--wait`，测试容器能正常退出。拉镜像失败时先解决出站网络和镜像源问题，再构建本项目。后文使用 `sudo docker`；两机部署文档中的 `docker` 也可同样加 `sudo`。
 
+如果镜像拉取很快，但构建在 `apt-get` 或 `go mod download` 停留很久，参见 [构建慢的排查与换源](BUILD_TROUBLESHOOTING.md)。这几步使用不同的下载来源，需要分别处理。
+
 ## 3. 两台都克隆代码
 
 如果 Docker 已预装而跳过了第 2 节，仍需在 A 安装 `git curl openssl`（`sudo apt-get install -y git curl openssl`），在 B 安装它们（`sudo dnf install -y git curl openssl`）。
