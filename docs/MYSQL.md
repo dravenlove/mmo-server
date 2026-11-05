@@ -31,7 +31,7 @@ MYSQL_DATABASE=mmo_game
 MYSQL_TLS=false
 ```
 
-将 `MYSQL_HOST` 改为你指定的 MySQL IP 或主机名；不要带 `http://`、`mysql://` 或端口。端口单独放在 `MYSQL_PORT`。用户名、密码、库名均可独立修改，密码中的 `@`、`:`、`/` 不需要按连接串语法转义。Compose env 文件中的密码建议用单引号，保留 `$` 等字符的字面值；密码包含单引号时需按 Compose env 文件语法转义。
+将 `MYSQL_HOST` 改为你指定的 MySQL IP 或主机名；不要带 `http://`、`mysql://` 或端口。端口单独放在 `MYSQL_PORT`。用户名、密码、库名均可独立修改，密码中的 `@`、`:`、`/` 不需要按连接串语法转义。Compose env 文件中的密码建议用单引号，保留 `$` 等字符的字面值；密码包含单引号时需按 [Compose env 文件语法](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/#env-file-syntax) 转义。
 
 `MYSQL_TLS=true` 要求 TLS 并校验服务器证书，证书须被运行镜像信任且与 `MYSQL_HOST` 匹配；`false` 是受控私网/隧道部署的默认值。本实现不提供跳过证书校验或静默降级选项。
 
