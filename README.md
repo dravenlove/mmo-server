@@ -4,7 +4,9 @@
 
 公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。Ubuntu 24.04.4 LTS + OpenCloudOS 9.6 两台 VPS 从零安装、克隆和更新，先看 [GitHub 与 VPS 操作指南](docs/GITHUB_VPS.md)，再按 [两机部署步骤](docs/DEPLOYMENT_TWO_HOSTS.md) 启动。
 
-VPS 配置较小时，可使用 [本机构建镜像、VPS 加载运行](docs/PREBUILT_IMAGES.md)：在开发机打好 A/B 两个镜像包，服务器执行 `docker load` 后以 `--no-build --pull never` 启动。
+主机统一按角色命名：`gateway` 运行 Gateway 和 Backend，`scene` 运行两个 C++ 场景。已有部署更新到新文件名和项目名时，先按 [配置改名迁移步骤](docs/DEPLOYMENT_NAMING_MIGRATION.md) 保留原配置与数据库卷。
+
+VPS 配置较小时，可使用 [本机构建镜像、VPS 加载运行](docs/PREBUILT_IMAGES.md)：在开发机打好 `gateway`/`scene` 两个镜像包，服务器执行 `docker load` 后以 `--no-build --pull never` 启动。
 
 也可以使用 [网上镜像仓库部署](docs/REGISTRY_DEPLOYMENT.md)：GitHub Actions 构建、验收后发布到 GHCR，VPS 直接 `docker compose pull`，不需要上传压缩包。
 
@@ -30,7 +32,7 @@ flowchart LR
 
 ## 本机启动
 
-本节会在**同一台机器**上构建并运行全部四个服务。Ubuntu + OpenCloudOS 两台 VPS 部署时，直接使用 [两机部署文档](docs/DEPLOYMENT_TWO_HOSTS.md) 的 A/B 配置；Ubuntu 的构建列表应只有 Backend、Gateway，OpenCloudOS 应只有两个场景。
+本节会在**同一台机器**上构建并运行全部四个服务。Ubuntu + OpenCloudOS 两台 VPS 部署时，直接使用 [两机部署文档](docs/DEPLOYMENT_TWO_HOSTS.md) 的 `gateway`/`scene` 配置；Ubuntu 的构建列表应只有 Backend、Gateway，OpenCloudOS 应只有两个场景。
 
 以下命令使用 Linux shell，要求 Docker Engine 运行中、支持 `docker compose`，并能拉取镜像、系统软件包和 Go 依赖。C++ 第三方头文件已随源码提供，构建场景时不再下载第三方源码。
 
@@ -108,9 +110,9 @@ docker run --rm -it --network host \
 
 ## 分别部署与持久化
 
-只有两台 Linux 主机时，使用 [两机部署文档](docs/DEPLOYMENT_TWO_HOSTS.md)：**A 放 Gateway、Backend 和 SQLite；B 放两个 C++ 场景**。对应配置为 `deploy/two-host-a.compose.yaml` 与 `deploy/two-host-b.compose.yaml`，各自配一份 env 文件即可。
+只有两台 Linux 主机时，使用 [两机部署文档](docs/DEPLOYMENT_TWO_HOSTS.md)：**`gateway` 放 Gateway、Backend 和 SQLite；`scene` 放两个 C++ 场景**。对应配置为 `deploy/gateway-host.compose.yaml` 与 `deploy/scene-host.compose.yaml`，各自配一份 env 文件即可。
 
-当前两台 VPS 的建议分配为 **A = Ubuntu 24.04.4 LTS，B = OpenCloudOS 9.6**。应用在容器内构建，宿主机不必安装 Go、GCC 或 CMake；两个系统的 Docker 安装方式见 [系统准备](docs/GITHUB_VPS.md#2-安装-docker)。
+当前两台 VPS 的建议分配为 **`gateway` = Ubuntu 24.04.4 LTS，`scene` = OpenCloudOS 9.6**。应用在容器内构建，宿主机不必安装 Go、GCC 或 CMake；两个系统的 Docker 安装方式见 [系统准备](docs/GITHUB_VPS.md#2-安装-docker)。
 
 `deploy/backend.compose.yaml`、`deploy/scene.compose.yaml`、`deploy/gateway.compose.yaml` 可分别在不同 Linux 主机启动。两台场景机共用场景模板，使用不同的 `SCENE_ID`、地址与端口；Backend 的 `SCENES` 必须填写网关和 Backend 都能访问的真实私网地址。跨主机不能使用本机 Compose 的 `backend`、`scene1` 等容器名。
 
@@ -163,6 +165,6 @@ python3 scripts/smoke.py
 
 Windows 原生四进程端到端 smoke 已通过 15/15 项，Go 测试与静态检查通过，C++ CTest 通过 2/2 项；TLS 入口通过可信证书与不可信证书测试。三个 Go 程序也已完成 Linux amd64 交叉编译。详细范围见 [验证记录](docs/VALIDATION.md)。
 
-本机 Docker Desktop 已完成四个 `linux/amd64` 镜像的构建、A/B 两包导出和重新加载，包含 C++ 的 Linux 编译。隔离环境的 Docker 端到端验证通过 8/8 项，覆盖登录、移动、奖励、跨场景迁移、CLI 凭据卷和全部容器重启后的持久化恢复。七份 Compose 配置展开通过（包含两机 A/B 配置）；两台真实 VPS 的私网联通、云防火墙、实际 TLS 证书挂载与容量仍需现场验收。
+本机 Docker Desktop 已完成四个 `linux/amd64` 镜像的构建、`gateway`/`scene` 两包导出和重新加载，包含 C++ 的 Linux 编译。隔离环境的 Docker 端到端验证通过 8/8 项，覆盖登录、移动、奖励、跨场景迁移、CLI 凭据卷和全部容器重启后的持久化恢复。七份 Compose 配置展开通过（包含两机 `gateway`/`scene` 配置）；两台真实 VPS 的私网联通、云防火墙、实际 TLS 证书挂载与容量仍需现场验收。
 
 运行 `python scripts/package.py` 可生成 `dist/mmo-mvp-source.zip` 与 SHA-256 校验文件。源码包只包含明确列出的源码、依赖、测试和部署资料，不含数据库、实际环境变量文件、玩家凭据、编译产物及测试日志。

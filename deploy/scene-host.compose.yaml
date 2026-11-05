@@ -1,3 +1,5 @@
+name: mmo-scene
+
 x-scene: &scene
   image: ${MMO_IMAGE_PREFIX:-mmo}/scene:${MMO_IMAGE_TAG:-dev}
   build:
@@ -34,7 +36,7 @@ services:
       SCENE_ID: scene-1
       SCENE_PORT: "9001"
     ports:
-      - "${SCENE_BIND_IP:?Set host B private or VPN IP}:9001:9001"
+      - "${SCENE_BIND_IP:?Set scene host private or VPN IP}:9001:9001"
   scene2:
     <<: *scene
     environment:
@@ -42,4 +44,4 @@ services:
       SCENE_ID: scene-2
       SCENE_PORT: "9002"
     ports:
-      - "${SCENE_BIND_IP:?Set host B private or VPN IP}:9002:9002"
+      - "${SCENE_BIND_IP:?Set scene host private or VPN IP}:9002:9002"

@@ -13,7 +13,7 @@
 
 现场曾出现：基础镜像约 1.8 秒完成、上下文约 0.1 秒完成，`apt-get` 安装编译工具约 3060 秒仍在输出软件包下载记录。这定位到软件包下载/安装阶段，尚未进入 C++ 编译；不能据此判定另一台 Go 机器也停在相同步骤。
 
-另一份现场日志中，Backend、Gateway 已经完成 `exporting` 和 `unpacking to mmo/…:dev`，但同一构建仍在等待 `scene2` 的 apt 下载（约 4401 秒）。这说明构建列表包含 Go 与场景服务，而不是 Go 编译未完成。按两机方案，A 的配置只应包含 `backend`、`gateway`；根目录 Compose 是四服务同机演示配置。
+另一份现场日志中，Backend、Gateway 已经完成 `exporting` 和 `unpacking to mmo/…:dev`，但同一构建仍在等待 `scene2` 的 apt 下载（约 4401 秒）。这说明构建列表包含 Go 与场景服务，而不是 Go 编译未完成。按两机方案，`gateway` 的配置只应包含 `backend`、`gateway`；根目录 Compose 是四服务同机演示配置。
 
 ## 1. 从 VPS 比较软件源
 
@@ -42,9 +42,9 @@ done
 git pull --ff-only
 ```
 
-### B：OpenCloudOS 场景机
+### `scene`：OpenCloudOS 场景机
 
-编辑已经填写好密钥和地址的 `deploy/two-host-b.env`，新增或修改这一行（只填域名，不填协议或路径）：
+编辑已经填写好密钥和地址的 `deploy/scene-host.env`，新增或修改这一行（只填域名，不填协议或路径）：
 
 ```dotenv
 DEBIAN_MIRROR=mirrors.ustc.edu.cn
@@ -53,24 +53,24 @@ DEBIAN_MIRROR=mirrors.ustc.edu.cn
 不要用模板覆盖现有 env 文件。然后运行：
 
 ```bash
-sudo docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compose.yaml -p mmo-host-b --progress plain build scene1
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene --progress plain build scene1
 ```
 
 `scene1` 和 `scene2` 共用同一个镜像标签，构建一次即可。在这次首次部署中，构建成功后启动两个容器：
 
 ```bash
-sudo docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compose.yaml -p mmo-host-b up -d --no-build --wait
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene up -d --no-build --wait
 ```
 
-### A：Ubuntu 网关与业务机
+### `gateway`：Ubuntu 网关与业务机
 
-日志出现 `exporting`、`naming` 或 `unpacking`，不足以证明当前 Docker 引擎中已有可复用的镜像。A 可以中断这次不需要的场景构建，但是否能跳过 Go 构建，应以同一台机器、同一个 Docker 引擎上的镜像检查结果为准：
+日志出现 `exporting`、`naming` 或 `unpacking`，不足以证明当前 Docker 引擎中已有可复用的镜像。`gateway` 可以中断这次不需要的场景构建，但是否能跳过 Go 构建，应以同一台机器、同一个 Docker 引擎上的镜像检查结果为准：
 
 ```bash
 sudo docker image inspect mmo/backend:dev mmo/gateway:dev --format '{{json .RepoTags}}'
 ```
 
-上例与当前 `MMO_IMAGE_TAG=dev` 对应；修改过标签时用实际标签。两个镜像都存在且版本与本次部署一致时，A 不必再次构建，配置好 A 的 env 并等 B 健康后，直接执行本节的 `up --no-build`。新的换源参数只影响后续构建。
+上例与当前 `MMO_IMAGE_TAG=dev` 对应；修改过标签时用实际标签。两个镜像都存在且版本与本次部署一致时，`gateway` 不必再次构建，配置好 `gateway` 的 env 并等 `scene` 健康后，直接执行本节的 `up --no-build`。新的换源参数只影响后续构建。
 
 若返回 `No such image`，先核对检查命令与先前构建是否在同一台 VPS、使用同一个 Docker 引擎。普通用户和 `sudo` 可能因各自的 context 或 Rootless 配置连接不同引擎，不能仅凭是否带 `sudo` 判定。可比较下面输出中的引擎 ID；这些命令不修改配置：[Docker context 说明](https://docs.docker.com/engine/manage-resources/contexts/)。
 
@@ -79,18 +79,18 @@ docker info --format 'name={{.Name}} id={{.ID}}'
 sudo docker info --format 'name={{.Name}} id={{.ID}}'
 ```
 
-如果镜像存在于预期的另一个引擎，后续检查、构建与运行统一使用那个引擎。如果目标引擎确实没有镜像，先完成下方 A 的构建，成功后重新检查镜像，再使用 `up --no-build`；不要反复尝试启动不存在的本地镜像。A 的构建只包含 Backend 和 Gateway，不需要等待 C++ 场景。
+如果镜像存在于预期的另一个引擎，后续检查、构建与运行统一使用那个引擎。如果目标引擎确实没有镜像，先完成下方 `gateway` 的构建，成功后重新检查镜像，再使用 `up --no-build`；不要反复尝试启动不存在的本地镜像。`gateway` 的构建只包含 Backend 和 Gateway，不需要等待 C++ 场景。
 
-如果 A 的日志同样停在 `apt-get`，在 `deploy/two-host-a.env` 中设置它实测更快的 `DEBIAN_MIRROR`。如果停在 Go 模块下载，则需要另行选择可访问的 Go 模块代理，并设置 `GOPROXY`；默认是 `https://proxy.golang.org,direct`。这项设置不关闭 `go.sum` 或校验数据库验证，参见 [Go 模块环境变量说明](https://go.dev/ref/mod#environment-variables)。
+如果 `gateway` 的日志同样停在 `apt-get`，在 `deploy/gateway-host.env` 中设置它实测更快的 `DEBIAN_MIRROR`。如果停在 Go 模块下载，则需要另行选择可访问的 Go 模块代理，并设置 `GOPROXY`；默认是 `https://proxy.golang.org,direct`。这项设置不关闭 `go.sum` 或校验数据库验证，参见 [Go 模块环境变量说明](https://go.dev/ref/mod#environment-variables)。
 
 ```bash
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a --progress plain build
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway --progress plain build
 ```
 
-本次首次部署中，在 B 已经健康、A 的镜像构建成功后启动 A：
+本次首次部署中，在 `scene` 已经健康、`gateway` 的镜像构建成功后启动 `gateway`：
 
 ```bash
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a up -d --no-build --wait
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway up -d --no-build --wait
 ```
 
 以上启动步骤针对尚未投入使用的首次部署。已有玩家和数据时，沿用 [维护窗口更新步骤](GITHUB_VPS.md#5-以后从-github-更新) 完成停机、备份和启动。

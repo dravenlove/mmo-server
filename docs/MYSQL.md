@@ -1,5 +1,7 @@
 # Backend 连接指定的 MySQL
 
+两台应用主机统一称为 `gateway` 和 `scene`。已有部署采用旧项目名时，先按 [配置改名迁移](DEPLOYMENT_NAMING_MIGRATION.md) 保留原配置与数据库，再使用本文命令。
+
 Backend 可通过配置选择 SQLite 或指定的 MySQL，Gateway 和 C++ 场景不直接连接数据库。修改地址、端口、账号或库名后重建 Backend 容器即可，不需要重新编译镜像。此功能需要包含 MySQL 支持的新镜像，例如 `mvp-20261105-mysql`；旧版 `mvp-20261104` 只有 SQLite 支持。
 
 ## 1. 数据库准备
@@ -15,11 +17,11 @@ GRANT SELECT, INSERT, UPDATE, CREATE, INDEX, REFERENCES
   ON mmo_game.* TO 'mmo_app'@'10.20.0.11';
 ```
 
-授权中的主机地址应是数据库实际看到的 Backend 出口地址。两机方案一般是主机 A 的私网/VPN地址；容器访问其他主机时通常经过宿主 NAT。MySQL 的监听地址、数据库访问白名单、云防火墙和网络路由都要允许 A 连接数据库端口。
+授权中的主机地址应是数据库实际看到的 Backend 出口地址。两机方案一般是`gateway` 主机 的私网/VPN地址；容器访问其他主机时通常经过宿主 NAT。MySQL 的监听地址、数据库访问白名单、云防火墙和网络路由都要允许 `gateway` 连接数据库端口。
 
 ## 2. Docker 配置
 
-两机部署只需在 **A：Ubuntu** 的 `deploy/two-host-a.env` 配置数据库；B 的场景服务不需要 MySQL 密码。分机 Backend 使用 `deploy/backend.env`，同机演示使用根目录 `.env`。
+两机部署只需在 **`gateway`：Ubuntu** 的 `deploy/gateway-host.env` 配置数据库；`scene` 的场景服务不需要 MySQL 密码。分机 Backend 使用 `deploy/backend.env`，同机演示使用根目录 `.env`。
 
 ```dotenv
 BACKEND_DB_DRIVER=mysql
@@ -46,15 +48,15 @@ MMO_IMAGE_TAG=mvp-20261105-mysql
 
 ## 3. 启动与修改地址
 
-首次部署先按 [镜像仓库部署](REGISTRY_DEPLOYMENT.md) 拉取镜像，并启动 B 的两个场景。然后在 A 执行：
+首次部署先按 [镜像仓库部署](REGISTRY_DEPLOYMENT.md) 拉取镜像，并启动 `scene` 的两个场景。然后在 `gateway` 执行：
 
 ```bash
 cd ~/mmo-server
 git pull --ff-only
-chmod 600 deploy/two-host-a.env
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a config --quiet
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a pull --policy always backend gateway
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a up -d --no-build --pull never --wait
+chmod 600 deploy/gateway-host.env
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway config --quiet
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway pull --policy always backend gateway
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway up -d --no-build --pull never --wait
 curl --fail http://127.0.0.1:8080/readyz
 ```
 

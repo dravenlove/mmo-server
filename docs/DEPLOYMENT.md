@@ -2,7 +2,7 @@
 
 本目录提供单机演示和各角色独立部署。所有应用镜像默认使用非 root 的 UID/GID `10001:10001` 运行；Backend 是唯一数据库写入者。默认 SQLite 数据目录必须挂载持久卷，也可按 [MySQL 配置](MYSQL.md) 连接指定的 MySQL；两种模式都只运行一个 Backend。下文 SQLite 卷备份步骤仅适用于 SQLite 模式。
 
-**只有两台主机时，请优先使用 [两机部署步骤](DEPLOYMENT_TWO_HOSTS.md)**：A 运行网关与 Backend，B 运行两个场景。下文按角色分别说明，四个角色不要求四台物理主机。
+**只有两台主机时，请优先使用 [两机部署步骤](DEPLOYMENT_TWO_HOSTS.md)**：`gateway` 运行网关与 Backend，`scene` 运行两个场景。下文按角色分别说明，四个角色不要求四台物理主机。
 
 ## 1. 端口与主机规划
 
@@ -53,7 +53,7 @@ docker image save -o mmo-client.tar mmo/client:dev
 docker image load -i mmo-scene.tar
 ```
 
-把 `deploy/` 配置文件传到目标主机即可，镜像运行不要求保留 Go/C++ 编译工具或完整源码。独立 Backend/Gateway/Scene 模板没有 `build` 字段；两机 A/B 模板包含构建配置，使用预构建镜像时明确加 `--no-build --pull never`。自动打包与上传步骤见 [预构建镜像操作指南](PREBUILT_IMAGES.md)。
+把 `deploy/` 配置文件传到目标主机即可，镜像运行不要求保留 Go/C++ 编译工具或完整源码。独立 Backend/Gateway/Scene 模板没有 `build` 字段；两机 `gateway`/`scene` 模板包含构建配置，使用预构建镜像时明确加 `--no-build --pull never`。自动打包与上传步骤见 [预构建镜像操作指南](PREBUILT_IMAGES.md)。
 
 ## 3. 准备配置
 
@@ -228,4 +228,4 @@ docker run --rm --user 0:0 --entrypoint tar \
 
 迁移使用持久记录、角色归属代次和会话代次；提交前可恢复撤销，提交后继续目标激活。遇到不确定状态会暂停角色而不是宣称迁移成功。场景进程重启会丢失内存墓碑，当前实现不承诺在任意网络分区、延迟旧请求和任意进程重启组合下仍提供生产级故障接管，不能据此宣称严格高可用或零数据丢失。
 
-已完成 Windows 原生四进程端到端 smoke 的 15/15 项检查、Go 测试与静态检查、C++ CTest 2/2 项，以及网关原生 TLS 验证。三个 Go 程序的 Linux amd64 交叉编译已通过；开发命令见 [README](../README.md#本机开发验证)，完整结果见 [验证记录](VALIDATION.md)。当前环境的 Docker Engine 不可用，现有 WSL 编译工具过旧，因此 C++ Linux 编译、Docker 镜像构建、容器运行、容器内 TLS 证书加载与跨机网络尚需在目标环境验收。七份环境的 Compose 配置展开已通过（包含两机 A/B 配置），属于配置静态校验，不代表上述运行验证通过。
+已完成 Windows 原生四进程端到端 smoke 15/15、Go 测试与静态检查、C++ CTest 2/2 及网关原生 TLS 验证。Linux Docker 四个镜像构建、SQLite 容器检查 8/8、MySQL 容器检查 9/9 和匿名镜像拉取均已验证，完整范围见 [验证记录](VALIDATION.md)。容器内实际 TLS 证书挂载、两台 VPS 私网互联与容量仍需目标环境验收。

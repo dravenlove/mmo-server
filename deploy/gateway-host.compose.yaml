@@ -1,3 +1,5 @@
+name: mmo-gateway
+
 x-runtime: &runtime
   restart: unless-stopped
   init: true
@@ -29,7 +31,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-}
       MYSQL_TLS: ${MYSQL_TLS:-false}
-      SCENES: scene-1=http://${SCENE_HOST_IP:?Set host B private or VPN IP}:9001,scene-2=http://${SCENE_HOST_IP:?Set host B private or VPN IP}:9002
+      SCENES: scene-1=http://${SCENE_HOST_IP:?Set scene host private or VPN IP}:9001,scene-2=http://${SCENE_HOST_IP:?Set scene host private or VPN IP}:9002
     volumes:
       - backend-data:/app/data
     healthcheck:

@@ -1,11 +1,13 @@
 # GitHub 克隆与两台 VPS 部署
 
+主机按 `gateway`、`scene` 角色命名。已经使用旧配置启动过服务时，更新代码后先按 [配置改名迁移步骤](DEPLOYMENT_NAMING_MIGRATION.md) 切换项目，保留原运行配置和数据。
+
 仓库：<https://github.com/dravenlove/mmo-server>，公开可读。两台 VPS 使用 HTTPS 克隆即可，不需要 GitHub 账号、访问令牌或 SSH 部署密钥。
 
 | 机器 | 系统 | 部署内容 | 配置文件 |
 | --- | --- | --- | --- |
-| A | Ubuntu 24.04.4 LTS | Go Gateway、Go Backend、SQLite | `deploy/two-host-a.compose.yaml` |
-| B | OpenCloudOS 9.6 | C++ scene-1、scene-2 | `deploy/two-host-b.compose.yaml` |
+| `gateway` | Ubuntu 24.04.4 LTS | Go Gateway、Go Backend、SQLite | `deploy/gateway-host.compose.yaml` |
+| `scene` | OpenCloudOS 9.6 | C++ scene-1、scene-2 | `deploy/scene-host.compose.yaml` |
 
 两边使用相同源码，分别在本机构建容器。宿主系统不需要安装 Go 或 C++ 编译器。以下安装说明面向新机器；已有 Docker 或其他容器服务时，先检查现有安装，避免混装或卸载正在使用的软件包。
 
@@ -34,7 +36,7 @@ Docker 服务与这两个插件均可用时，直接进入第 3 节。需要支�
 
 ## 2. 安装 Docker
 
-### A：Ubuntu 24.04.4 LTS
+### `gateway`：Ubuntu 24.04.4 LTS
 
 Ubuntu 24.04 属于 Docker 官方支持的系统。新机器按 [Docker 官方 Ubuntu 安装说明](https://docs.docker.com/engine/install/ubuntu/) 配置仓库：
 
@@ -55,7 +57,7 @@ sudo systemctl enable --now docker
 
 如果已有 `docker.io`、`podman-docker` 或其他容器运行时导致包冲突，按官方说明确认现有服务和数据后处理；不要把强制卸载作为首次安装步骤。
 
-### B：OpenCloudOS 9.6
+### `scene`：OpenCloudOS 9.6
 
 OpenCloudOS 9 使用自己的软件仓库。社区 EPOL9 提供 Docker CE；官方 FAQ 给出了 `epol-release` 的启用方法。这里使用 OpenCloudOS 软件源中的包及其依赖。来源：[OpenCloudOS 软件源说明](https://docs.opencloudos.org/faq/)、[Docker CE 发行说明](https://docs.opencloudos.org/release/v9.4/#76docker-ce-2801)、[EPOL9 软件包目录](https://mirrors.opencloudos.tech/epol/9/Everything/x86_64/os/Packages/)。
 
@@ -87,7 +89,7 @@ sudo docker run --rm hello-world
 
 ## 3. 两台都克隆代码
 
-如果 Docker 已预装而跳过了第 2 节，仍需在 A 安装 `git curl openssl`（`sudo apt-get install -y git curl openssl`），在 B 安装它们（`sudo dnf install -y git curl openssl`）。
+如果 Docker 已预装而跳过了第 2 节，仍需在 `gateway` 安装 `git curl openssl`（`sudo apt-get install -y git curl openssl`），在 `scene` 安装它们（`sudo dnf install -y git curl openssl`）。
 
 在各自登录用户的目录中执行：
 
@@ -102,19 +104,19 @@ git rev-parse HEAD
 
 源码公开不代表运行配置公开。仓库只带空密钥模板，实际的 `deploy/*.env`、数据库、玩家 token、证书私钥和备份被 `.gitignore` 排除。只在服务器上创建实际 env 文件，不使用 `git add -f` 上传它们。
 
-## 4. 填配置并启动：先 B，后 A
+## 4. 填配置并启动：先 `scene`，后 `gateway`
 
 按 [两机部署文档](DEPLOYMENT_TWO_HOSTS.md) 的第 1–4 节执行，顺序为：
 
-1. 确认 A、B 的私网或加密 VPN 地址互通。示例 `10.20.0.11`、`10.20.0.22` 必须替换成实际地址。
+1. 确认 `gateway`、`scene` 的私网或加密 VPN 地址互通。示例 `10.20.0.11`、`10.20.0.22` 必须替换成实际地址。
 2. 运行一次 `openssl rand -hex 32`，把同一个随机密钥填入两台 env 的 `INTERNAL_TOKEN`。
-3. B 创建 `deploy/two-host-b.env`，设置自己的 `SCENE_BIND_IP`，启动两个场景。
-4. A 创建 `deploy/two-host-a.env`，设置指向 B 的 `SCENE_HOST_IP` 和 A 的 `GATEWAY_BIND_IP`，启动 Backend 与网关。
-5. 从 A 的网关与 Backend 容器分别检查 B 的两个场景，再用客户端测试移动、切换和奖励。
+3. `scene` 创建 `deploy/scene-host.env`，设置自己的 `SCENE_BIND_IP`，启动两个场景。
+4. `gateway` 创建 `deploy/gateway-host.env`，设置指向 `scene` 的 `SCENE_HOST_IP` 和 `gateway` 的 `GATEWAY_BIND_IP`，启动 Backend 与网关。
+5. 从 `gateway` 的网关与 Backend 容器分别检查 `scene` 的两个场景，再用客户端测试移动、切换和奖励。
 
-跨机内部 HTTP 应在私网或加密 VPN 上运行；共享密钥本身不加密流量。公网玩家入口使用 TLS，详见 [TLS 配置](DEPLOYMENT.md#4-网关-tls)。数据库只存在 A 的持久卷里，不需要在 B 安装数据库。
+跨机内部 HTTP 应在私网或加密 VPN 上运行；共享密钥本身不加密流量。公网玩家入口使用 TLS，详见 [TLS 配置](DEPLOYMENT.md#4-网关-tls)。SQLite 模式的数据位于 `gateway` 的持久卷；MySQL 模式连接指定数据库，不需要在 `scene` 安装数据库。
 
-端口安排：A 的 TCP 7000 给玩家；8080 仅回环健康检查，8081 不发布到宿主机。B 的 TCP 9001/9002 绑定私网/VPN 地址，只允许 A 的实际出站来源和受控运维来源访问。云安全组与 Docker 转发规则要一起验证；仅配置 UFW/firewalld 不足以证明容器端口已受限，参见 [Docker 防火墙说明](https://docs.docker.com/engine/network/packet-filtering-firewalls/)。
+端口安排：`gateway` 的 TCP 7000 给玩家；8080 仅回环健康检查，8081 不发布到宿主机。`scene` 的 TCP 9001/9002 绑定私网/VPN 地址，只允许 `gateway` 的实际出站来源和受控运维来源访问。云安全组与 Docker 转发规则要一起验证；仅配置 UFW/firewalld 不足以证明容器端口已受限，参见 [Docker 防火墙说明](https://docs.docker.com/engine/network/packet-filtering-firewalls/)。
 
 ## 5. 以后从 GitHub 更新
 
@@ -131,45 +133,45 @@ git rev-parse HEAD
 
 记下更新前的提交号用于排查，并核对更新后两台提交号相同。如果新版本更改 env 模板，比较新模板并手动补充字段，保留原随机密钥、地址、TLS 设置和 `BACKEND_VOLUME_NAME`。Git 更新不会替你迁移配置或数据库。
 
-**先构建好两边的镜像，再开始停机。** 构建失败时，原容器仍可继续运行。B 上：
+**先构建好两边的镜像，再开始停机。** 构建失败时，原容器仍可继续运行。`scene` 上：
 
 ```bash
-sudo docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compose.yaml -p mmo-host-b config --quiet
-sudo docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compose.yaml -p mmo-host-b build
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene config --quiet
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene build
 ```
 
-A 上：
+`gateway` 上：
 
 ```bash
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a config --quiet
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a build
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway config --quiet
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway build
 ```
 
-两边构建成功后，先在 **A** 停入口和业务：
+两边构建成功后，先在 **`gateway`** 停入口和业务：
 
 ```bash
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a stop gateway
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a stop backend
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway stop gateway
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway stop backend
 ```
 
-再在 **B** 停场景：
+再在 **`scene`** 停场景：
 
 ```bash
-sudo docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compose.yaml -p mmo-host-b stop
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene stop
 ```
 
-此时按 [两机备份说明](DEPLOYMENT_TWO_HOSTS.md#5-停止数据与已有部署迁移) 备份 A 的完整数据库卷。然后先启动 **B**，确认健康：
+此时按 [两机备份说明](DEPLOYMENT_TWO_HOSTS.md#5-停止数据与已有部署迁移) 备份 `gateway` 的完整数据库卷。然后先启动 **`scene`**，确认健康：
 
 ```bash
-sudo docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compose.yaml -p mmo-host-b up -d --no-build --wait
-sudo docker compose --env-file deploy/two-host-b.env -f deploy/two-host-b.compose.yaml -p mmo-host-b ps
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene up -d --no-build --wait
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene ps
 ```
 
-最后启动 **A**：
+最后启动 **`gateway`**：
 
 ```bash
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a up -d --no-build --wait
-sudo docker compose --env-file deploy/two-host-a.env -f deploy/two-host-a.compose.yaml -p mmo-host-a ps
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway up -d --no-build --wait
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway ps
 curl --fail http://127.0.0.1:8080/readyz
 ```
 
