@@ -8,6 +8,10 @@
 /certs/
 /deploy/certs/
 /scene/build/
+/desktop/**/bin/
+/desktop/**/obj/
+*.credential
+*.pending
 *.token
 .env
 .env.*

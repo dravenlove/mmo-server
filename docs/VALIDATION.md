@@ -8,6 +8,10 @@
 
 两台 VPS 模板现默认 `ghcr.io/dravenlove/mmo-server/*:mvp-20261105-mysql`，避免复制模板后误拉 Docker Hub 的开发镜像。两份模板在发布、本地 `mmo:dev` 和自定义仓库/标签下共 6 组 Compose 展开通过；数据库默认驱动、卷名和主机角色保持原值。主指南补充镜像名检查，自行构建文档明确本地标签配置；shell 语法通过，未启动容器或访问实际 VPS。报告位于 `output/vps-template-defaults-d50dce74/report.json`。
 
+2026-11-05 新增 Windows WPF 桌面客户端，使用本机 .NET SDK 10.0.403 / Windows Desktop Runtime 10.0.14，Release 编译零警告、零错误。协议核心对隔离的 Go Gateway、Backend 和两个 C++ 场景完成 16/16 检查，覆盖凭据加密与重连、请求/推送分发、移动、奖励幂等、迁移重试、断线、UTF-8 拆包、64KiB 边界与不可信 TLS 证书拒绝；TLS 用例先通过对照握手，避免把故障测试服务误判为安全检查通过。最终单文件 exe 在同一隔离环境完成 6/6 界面业务检查，并渲染截图检查按钮、文字和场景面板；这不是物理鼠标/键盘的完整自动化验收。报告在 `output/desktop-check-20261105-215648-a69e7b/report.json` 和 `ui-packaged-report.json`，测试创建的四个进程已停止。
+
+最终桌面 exe 还从本机对用户提供的真实公网 gateway 完成 TCP 和未登录协议 ping 检查，成功返回游戏响应，桌面程序的协议 ping 样本约 57～104ms；未注册公网账号、未登录或修改真实玩家数据。实际地址只保存于被 Git 忽略的本机交付配置和测试报告。用户另反馈已完成真实 VPS 的容器客户端业务验收；公网桌面角色业务仍由用户用 GUI 验收，公网 TLS、容量、持续稳定性及故障恢复不在此次公网探测范围。
+
 | 检查 | 结果 | 范围 |
 | --- | --- | --- |
 | `scripts/build.ps1` | 通过 | Windows 本机生成 Backend、Gateway、CLI 和 C++ SceneHost |

@@ -16,6 +16,9 @@ for directory in ("cmd", "internal", "scene/src", "scene/tests", "scripts", "doc
     files.extend(p for p in (root / directory).rglob("*")
                  if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("__debug_bin"))
 files.append(root / "scene/CMakeLists.txt")
+files.extend(p for p in (root / "desktop").rglob("*")
+             if p.is_file() and p.suffix in (".cs", ".csproj", ".xaml")
+             and "bin" not in p.parts and "obj" not in p.parts)
 files.extend(p for p in (root / "deploy").iterdir() if p.is_file() and (p.name.endswith(".compose.yaml") or p.name.endswith(".env.example")))
 files = sorted(set(files), key=lambda p: p.relative_to(root).as_posix())
 output = root / "dist"

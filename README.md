@@ -4,6 +4,8 @@
 
 公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。
 
+**Windows 测试已部署的服务器，优先使用 [桌面客户端](docs/DESKTOP_CLIENT.md)。** 构建后双击 `dist/desktop/MMO.Client.exe`，填写 gateway 地址，即可测试连接、登录、移动、领取奖励和切换场景；本机直接连接远程服务器。
+
 **两台 VPS 部署从这里开始：[统一部署流程：gateway + scene + MySQL](docs/DEPLOYMENT_TWO_HOSTS.md)。** 依次完成配置、拉取现成镜像、启动与验收；VPS 不需要编译 Go/C++。同一份文档也包含后续更新、停机、恢复和排错。
 
 | 主机角色 | 建议配置 | 运行内容 |
@@ -15,7 +17,7 @@
 
 ```mermaid
 flowchart LR
-    C[命令行客户端] -->|TCP 7000 / 可选 TLS| G[Go Gateway]
+    C[Windows 桌面 / 命令行客户端] -->|TCP 7000 / 可选 TLS| G[Go Gateway]
     G -->|内部 HTTP| B[Go Backend]
     G -->|移动 / AOI 查询| S1[C++ scene-1]
     G -->|移动 / AOI 查询| S2[C++ scene-2]
@@ -27,6 +29,18 @@ flowchart LR
 已定义的演示闭环：注册与登录、权威移动、邻近玩家视图、两场景切换、断线重连、一次性领取 100 金币。位置定期保存；金币与领取记录使用事务落盘。两个场景是两个独立进程，可以放在不同机器。
 
 **这不是完整 MMO 产品。** 当前实现采用 HTTP/JSON、网关轮询场景视图和单实例 Backend（可选 SQLite / MySQL）；没有 NPC、技能战斗、跨区无缝世界、自动场景故障迁移及生产账号系统。详细约束见 [协议](docs/PROTOCOL.md)；长期目标与当前 MVP 应分开阅读，见 [架构设计](ARCHITECTURE.md)。
+
+## Windows 桌面客户端
+
+已有客户端时直接双击 `dist/desktop/MMO.Client.exe`，先点“测试连接”，再用新角色名“连接并登录”。测试连接只发送游戏协议 ping，不创建账号。
+
+从源码构建需要 .NET 10 SDK。在 Windows 项目根目录的 PowerShell 中执行；下例用于已经配置 TLS 的网关，域名须替换为自己的：
+
+```powershell
+.\scripts\build-desktop.ps1 -Address 'game.example.com:7000' -Tls -Shortcut
+```
+
+当前开发机已有 .NET 10 Desktop Runtime，可以双击运行默认发布的 exe。交付给没有该运行时的 Windows x64 电脑时，构建参数追加 `-SelfContained`。客户端连接远程 gateway 时，本机无需启动服务端或安装 Docker/Go；后文的 Docker 同机演示与 Go 命令行客户端各有自己的环境要求。TLS 开关须与网关配置一致，使用和凭据说明见 [DESKTOP_CLIENT.md](docs/DESKTOP_CLIENT.md)。
 
 ## 本机启动
 
@@ -61,6 +75,8 @@ docker compose logs --tail 100
 健康检查通过表示相应进程可响应；它不替代注册、移动、切换与重连的端到端验证。
 
 ## 连接客户端
+
+Windows 图形界面优先使用上面的桌面客户端；以下为开发或自动化联调用的 Go 命令行客户端。
 
 宿主机有 Go 时，从项目根目录运行：
 
