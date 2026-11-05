@@ -44,6 +44,13 @@ done
 git pull --ff-only
 ```
 
+本页后续命令用于自行构建。两份主机模板现已默认 GHCR 发布镜像；选择本地构建时，两台实际 env 先明确设置下面两项，使本页的构建、检查和启动使用同一组本地标签：
+
+```dotenv
+MMO_IMAGE_PREFIX=mmo
+MMO_IMAGE_TAG=dev
+```
+
 ### `scene`：OpenCloudOS 场景机
 
 编辑已经填写好密钥和地址的 `deploy/scene-host.env`，新增或修改这一行（只填域名，不填协议或路径）：
@@ -72,7 +79,7 @@ sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compos
 sudo docker image inspect mmo/backend:dev mmo/gateway:dev --format '{{json .RepoTags}}'
 ```
 
-上例与当前 `MMO_IMAGE_TAG=dev` 对应；修改过标签时用实际标签。两个镜像都存在且版本与本次部署一致时，`gateway` 不必再次构建，配置好 `gateway` 的 env 并等 `scene` 健康后，直接执行本节的 `up --no-build`。新的换源参数只影响后续构建。
+上例与本节自行构建配置的 `MMO_IMAGE_TAG=dev` 对应；修改过标签时用实际标签。两个镜像都存在且版本与本次部署一致时，`gateway` 不必再次构建，配置好 `gateway` 的 env 并等 `scene` 健康后，直接执行本节的 `up --no-build`。新的换源参数只影响后续构建。
 
 若返回 `No such image`，先核对检查命令与先前构建是否在同一台 VPS、使用同一个 Docker 引擎。普通用户和 `sudo` 可能因各自的 context 或 Rootless 配置连接不同引擎，不能仅凭是否带 `sudo` 判定。可比较下面输出中的引擎 ID；这些命令不修改配置：[Docker context 说明](https://docs.docker.com/engine/manage-resources/contexts/)。
 

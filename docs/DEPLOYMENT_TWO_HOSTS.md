@@ -19,6 +19,8 @@
 
 当前发布版本：`mvp-20261105-mysql`，镜像前缀：`ghcr.io/dravenlove/mmo-server`。两台使用相同版本。现有镜像为 `linux/amd64`，目标机 `uname -m` 应输出 `x86_64`。
 
+两份主机模板已默认使用上述 GHCR 镜像。已有实际 env 会保留原值；更新代码后仍需检查自己的 `MMO_IMAGE_PREFIX` 和 `MMO_IMAGE_TAG`。启动前的 `config --images` 只输出镜像名，应与上述发布版本一致。
+
 先在两台查看现有项目：
 
 ```bash
@@ -126,6 +128,7 @@ MOVE_SPEED=6
 
 ```bash
 sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml config --images
 sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml pull --policy always scene1
 sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml up -d --no-build --pull never --wait
 sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml ps
@@ -172,6 +175,7 @@ TLS_KEY_FILE=
 
 ```bash
 sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --images
 sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml pull --policy always backend gateway
 sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml up -d --no-build --pull never --wait
 sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml ps
@@ -259,6 +263,7 @@ sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.co
 ```bash
 cd ~/mmo-server
 sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml config --images
 sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml pull --policy always scene1
 ```
 
@@ -267,6 +272,7 @@ sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compos
 ```bash
 cd ~/mmo-server
 sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --images
 sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml pull --policy always backend gateway
 ```
 
