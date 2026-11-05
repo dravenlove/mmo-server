@@ -62,7 +62,8 @@ config['volumes']['backend-data']['name'] = project + '-data'
 config['networks']['default']['name'] = project + '-net'
 config['services']['backend']['environment']['BACKEND_DB_DRIVER'] = args.database
 if args.database == 'mysql':
-    password = 'test@:/?&=' + secrets.token_hex(20)
+    # config.json 会再次经过 Compose 插值；$$ 保留密码里的字面 $。
+    password = ('test@:/?&=$literal' + secrets.token_hex(20)).replace('$', '$$')
     config['services']['backend']['environment'].update(
         MYSQL_HOST='mysql', MYSQL_PORT='3306', MYSQL_USER='mmo', MYSQL_PASSWORD=password,
         MYSQL_DATABASE='mmo_test', MYSQL_TLS='false')
