@@ -67,6 +67,13 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set a random INTERNAL_TOKEN of at least 32 characters in .env}
       BACKEND_LISTEN: 0.0.0.0:8081
       BACKEND_DB: /app/data/mmo.db
+      BACKEND_DB_DRIVER: ${BACKEND_DB_DRIVER:-sqlite}
+      MYSQL_HOST: ${MYSQL_HOST:-}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER:-}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-}
+      MYSQL_TLS: ${MYSQL_TLS:-false}
       SCENES: scene-1=http://scene1:9001,scene-2=http://scene2:9002
     ports:
       - "127.0.0.1:8081:8081"

@@ -18,6 +18,8 @@ from smoke import Peer, free_port, http
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--tag', required=True)
 parser.add_argument('--image-prefix', default='mmo')
+parser.add_argument('--database', choices=('sqlite', 'mysql'), default='sqlite')
+parser.add_argument('--mysql-image', default='mysql:8.0', help='隔离测试使用的本地 MySQL 镜像')
 args = parser.parse_args()
 TAG = args.tag
 PREFIX = args.image_prefix.rstrip('/')
@@ -58,6 +60,23 @@ for name, service in config['services'].items():
 config['services']['gateway'].pop('volumes', None)
 config['volumes']['backend-data']['name'] = project + '-data'
 config['networks']['default']['name'] = project + '-net'
+config['services']['backend']['environment']['BACKEND_DB_DRIVER'] = args.database
+if args.database == 'mysql':
+    password = 'test@:/?&=' + secrets.token_hex(20)
+    config['services']['backend']['environment'].update(
+        MYSQL_HOST='mysql', MYSQL_PORT='3306', MYSQL_USER='mmo', MYSQL_PASSWORD=password,
+        MYSQL_DATABASE='mmo_test', MYSQL_TLS='false')
+    config['services']['backend']['depends_on']['mysql'] = {'condition': 'service_healthy'}
+    config['volumes']['mysql-data'] = {'name': project + '-mysql-data'}
+    config['services']['mysql'] = {
+        'image': args.mysql_image,
+        'environment': {'MYSQL_ROOT_PASSWORD': secrets.token_hex(32), 'MYSQL_DATABASE': 'mmo_test',
+                        'MYSQL_USER': 'mmo', 'MYSQL_PASSWORD': password},
+        'volumes': [{'type': 'volume', 'source': 'mysql-data', 'target': '/var/lib/mysql'}],
+        'networks': {'default': None},
+        'command': ['--max-connections=30', '--performance-schema=OFF', '--innodb-buffer-pool-size=67108864'],
+        'healthcheck': {'test': ['CMD-SHELL', 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h127.0.0.1 -uroot -Nse "SELECT 1" >/dev/null'],
+                        'interval': '2s', 'timeout': '5s', 'retries': 40, 'start_period': '10s'}}
 cfg = work / 'compose.json'
 cfg.write_text(json.dumps(config, indent=2), encoding='utf-8')
 compose = ['docker', 'compose', '-f', str(cfg), '-p', project]
@@ -103,8 +122,8 @@ try:
     compose_ok('up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '90')
     healthy = run(['docker', 'inspect', '--format', '{{.State.Health.Status}}',
                    *compose_ok('ps', '-q').stdout.split()])
-    assert healthy.returncode == 0 and healthy.stdout.split() == ['healthy'] * 4, healthy.stdout
-    passed('four Linux containers healthy with read-only root and non-root user')
+    assert healthy.returncode == 0 and healthy.stdout.split() == ['healthy'] * len(config['services']), healthy.stdout
+    passed('four application containers healthy with read-only root and non-root user; database=' + args.database)
     for name in ('backend', 'scene1'):
         path = '/v1/register' if name == 'backend' else '/v1/enter'
         assert http(f'http://127.0.0.1:{ports[name]}' + path, {'name': 'intruder'})[0] in (401, 403)
@@ -132,7 +151,7 @@ try:
                        {'role_id': b['role_id'], 'session_epoch': b['session_epoch']}, token), range(8)))
     assert all(code == 200 and data['coins'] == 100 for code, data in rewards)
     assert sum(data['granted'] for _, data in rewards) == 1
-    passed('SQLite sequential and concurrent reward idempotency')
+    passed(args.database + ' sequential and concurrent reward idempotency')
     transferred = alice.request('transfer', target_scene_id='scene-2', request_id='docker-transfer-1')
     retry = alice.request('transfer', target_scene_id='scene-2', request_id='docker-transfer-1')
     assert transferred['scene_id'] == 'scene-2' and retry['owner_epoch'] == transferred['owner_epoch']
@@ -150,9 +169,28 @@ try:
     passed('packaged CLI and writable credential volume under UID 10001')
     close_peers()
     time.sleep(2.5)
+    if args.database == 'mysql':
+        backend_id = compose_ok('ps', '-q', 'backend').stdout.strip()
+        compose_ok('restart', 'mysql')
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            state = run(['docker', 'inspect', backend_id])
+            if state.returncode == 0:
+                info = json.loads(state.stdout)[0]
+                if info['RestartCount'] > 0 and info['State']['Health']['Status'] == 'healthy':
+                    break
+            time.sleep(1)
+        else:
+            raise AssertionError('Backend did not restart safely after the MySQL session was lost')
+        recovered = cli([{'op': 'view'}, {'op': 'claim'}], 'cli-after-mysql-restart')
+        assert recovered['view'][0]['scene_id'] == 'scene-2'
+        assert recovered['claim'] == [{'coins': 100, 'granted': False}]
+        passed('MySQL restart fences the lost connection and automatically restarts Backend with the original data')
     compose_ok('stop', 'gateway')
     compose_ok('stop', 'backend')
     compose_ok('stop', 'scene1', 'scene2')
+    if args.database == 'mysql':
+        compose_ok('stop', 'mysql')
     compose_ok('up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '90')
     second = cli([{'op': 'view'}, {'op': 'claim'}], 'cli-after-restart')
     restored = second['view'][0]['self']
@@ -163,7 +201,7 @@ try:
     names = compose_ok('ps', '-q').stdout.split()
     stats = run(['docker', 'stats', '--no-stream', '--format', '{{json .}}', *names])
     (work / 'stats.jsonl').write_text(stats.stdout, encoding='utf-8')
-    report = {'ok': True, 'image_tag': TAG, 'image_prefix': PREFIX, 'checks': checks, 'count': len(checks),
+    report = {'ok': True, 'image_tag': TAG, 'image_prefix': PREFIX, 'database': args.database, 'checks': checks, 'count': len(checks),
               'scope': 'Linux containers on one Docker engine; no real VPS network, TLS or capacity test'}
     (work / 'report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(f'PASS {len(checks)} Docker checks; report: {work / "report.json"}', flush=True)

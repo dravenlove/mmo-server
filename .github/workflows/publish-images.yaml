@@ -46,6 +46,12 @@ jobs:
       - name: Verify containers and persistent volumes
         run: python3 scripts/smoke_docker.py --tag "$IMAGE_TAG"
 
+      - name: Verify MySQL integration and recovery
+        run: |
+          docker pull mysql:8.0
+          python3 scripts/test_mysql.py
+          python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql
+
       - name: Sign in to GitHub Container Registry
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -35,10 +35,17 @@ type Route struct {
 
 type Config struct {
 	Token        string
+	DBDriver     string
 	DBPath       string
+	MySQL        MySQLConfig
 	Scenes       map[string]string
 	DefaultScene string
 	HTTPClient   *http.Client
+}
+
+// MySQLConfig 使用独立字段，密码中的 @、:、/ 不会被当作连接串语法。
+type MySQLConfig struct {
+	Host, Port, User, Password, Database, TLS string
 }
 
 // ParseScenes 保留配置中第一项作为新角色默认场景。

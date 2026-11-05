@@ -4,10 +4,10 @@
 
 | 镜像 | 部署位置 |
 | --- | --- |
-| `ghcr.io/dravenlove/mmo-server/backend:mvp-20261104` | A：Ubuntu |
-| `ghcr.io/dravenlove/mmo-server/gateway:mvp-20261104` | A：Ubuntu |
-| `ghcr.io/dravenlove/mmo-server/scene:mvp-20261104` | B：OpenCloudOS；两个场景共用 |
-| `ghcr.io/dravenlove/mmo-server/client:mvp-20261104` | 可选验收客户端 |
+| `ghcr.io/dravenlove/mmo-server/backend:mvp-20261105-mysql` | A：Ubuntu |
+| `ghcr.io/dravenlove/mmo-server/gateway:mvp-20261105-mysql` | A：Ubuntu |
+| `ghcr.io/dravenlove/mmo-server/scene:mvp-20261105-mysql` | B：OpenCloudOS；两个场景共用 |
+| `ghcr.io/dravenlove/mmo-server/client:mvp-20261105-mysql` | 可选验收客户端 |
 
 以上标签必须已经发布成功才能拉取。新的发布使用新版本号，或使用工作流默认生成的 `sha-提交号` 标签；部署时两台使用同一发布版本。
 
@@ -39,6 +39,8 @@ curl --connect-timeout 5 --max-time 15 -sS -o /dev/null -w 'HTTP=%{http_code}\n'
 
 该检查只验证仓库入口，镜像层下载还可能访问其他分发地址；以实际拉取成功为准。如果 VPS 网络无法稳定下载，可继续使用 [离线 A/B 镜像包](PREBUILT_IMAGES.md)，或将相同镜像同步到自己的国内镜像仓库，并修改 `MMO_IMAGE_PREFIX`。
 
+需要连接指定 MySQL 时，另按 [MySQL 配置](MYSQL.md) 在主机 A 填写数据库地址与账号；场景机不需要这些数据库凭据。
+
 ## 4. 修改两台部署配置
 
 在两台的 `~/mmo-server` 执行 `git pull --ff-only`。已有实际 env 文件继续使用；不存在时先按 [两机部署文档](DEPLOYMENT_TWO_HOSTS.md) 从对应模板创建，并填写真实地址和同一随机内部密钥。
@@ -47,7 +49,7 @@ Ubuntu 编辑 `deploy/two-host-a.env`，OpenCloudOS 编辑 `deploy/two-host-b.en
 
 ```dotenv
 MMO_IMAGE_PREFIX=ghcr.io/dravenlove/mmo-server
-MMO_IMAGE_TAG=mvp-20261104
+MMO_IMAGE_TAG=mvp-20261105-mysql
 ```
 
 `MMO_IMAGE_PREFIX` 不包含最后的服务名和版本。`INTERNAL_TOKEN` 两台保持相同，A 的 `SCENE_HOST_IP` 指向 B 的实际私网/VPN地址，B 的 `SCENE_BIND_IP` 绑定同一地址。网关、TLS 和原来的数据库卷配置继续按两机文档填写。
@@ -81,10 +83,10 @@ curl --fail http://127.0.0.1:8080/readyz
 验收客户端也可直接拉取，在 Ubuntu 上运行：
 
 ```bash
-sudo docker pull ghcr.io/dravenlove/mmo-server/client:mvp-20261104
+sudo docker pull ghcr.io/dravenlove/mmo-server/client:mvp-20261105-mysql
 sudo docker run --rm -it --pull never --network host \
   --mount type=volume,source=mmo-client-tokens,target=/app/tokens \
-  ghcr.io/dravenlove/mmo-server/client:mvp-20261104 \
+  ghcr.io/dravenlove/mmo-server/client:mvp-20261105-mysql \
   -addr 127.0.0.1:7000 -name alice -token-file /app/tokens/alice.token
 ```
 

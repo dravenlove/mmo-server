@@ -26,7 +26,7 @@ View: `{self:Role,players:Role[],tick:uint64,scene_id:string}`。
 
 ## Go Backend
 
-环境：`INTERNAL_TOKEN`；`BACKEND_LISTEN=127.0.0.1:8081`；`BACKEND_DB=data/mmo.db`；`SCENES=scene-1=http://127.0.0.1:9001,scene-2=http://127.0.0.1:9002`。只运行一个 Backend 实例，数据库目录需要持久卷。
+环境：`INTERNAL_TOKEN`；`BACKEND_LISTEN=127.0.0.1:8081`；`BACKEND_DB_DRIVER=sqlite`（默认）及 `BACKEND_DB=data/mmo.db`；`SCENES=scene-1=http://127.0.0.1:9001,scene-2=http://127.0.0.1:9002`。连接指定 MySQL 时改为 `BACKEND_DB_DRIVER=mysql` 并填写 [MySQL 环境变量](MYSQL.md)。两种模式均只运行一个 Backend；SQLite 目录需持久卷，MySQL 数据存于指定库。
 
 - GET `/healthz`: `{ok:true,service:"backend"}`，探测数据库可用。
 - POST `/v1/register`: `{name:string}` → `{token:string,role_id:string}`。名字 1..24 字符、唯一；服务端生成 32 字节随机 token，数据库仅保存 token 哈希；默认第一场景、epoch=1、session=0、位置0、金币0。
@@ -36,7 +36,7 @@ View: `{self:Role,players:Role[],tick:uint64,scene_id:string}`。
 - POST `/v1/transfer`: Ref 加 `{target_scene_id:string,request_id:string}` → Route。每角色串行；request_id 作为角色内幂等键，保存迁移记录。记录 PREPARING → freeze source → prepare target → 数据库原子更新归属与 COMMITTED → activate target → remove source → DONE。提交前失败走可恢复撤销（只恢复仍归属源的角色）；提交后失败保留记录，之后 login/session/同请求重试继续目标激活，不回滚。启动后/调用时恢复持久记录，不确定时暂停该角色。新目标位置可沿用源位置。重复相同 request_id 不得再次迁移，不同目标同 request_id 拒绝。
 - POST `/v1/claim`: `{role_id:string,session_epoch:int64}` → `{coins:int64,granted:bool}`。仅一次领取固定 100 金币的 demo 欢迎奖励，唯一键 welcome:role_id 与余额在同事务提交，重复调用返回 granted=false。不提供任意金额入账接口。
 
-所有场景调用设置超时。拒绝未注册的 scene_id 和无效 Ref。Backend 全局串行控制可用于 MVP，但需明确吞吐与单点边界。SQLite 使用 WAL、busy timeout 和事务。数据库必须有进程级独占保护，防止两 Backend 用同一数据库。
+所有场景调用设置超时。拒绝未注册的 scene_id 和无效 Ref。Backend 全局串行控制可用于 MVP，但需明确吞吐与单点边界。SQLite 使用 WAL、busy timeout、事务与文件独占锁；MySQL 使用 InnoDB 事务、迁移唯一约束和固定连接上的会话独占锁。防止两个 Backend 同时写同一库，MySQL 模式也不开放多副本。
 
 ## Go Gateway 外部 TCP
 

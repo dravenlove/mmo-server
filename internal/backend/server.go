@@ -15,17 +15,16 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
 
 type Server struct {
 	mu     sync.Mutex
-	db     *sql.DB
-	lock   *os.File
+	db     *store
 	config Config
 	client *http.Client
 }
@@ -34,7 +33,14 @@ func New(config Config) (*Server, error) {
 	if len(config.Token) < 32 {
 		return nil, fmt.Errorf("INTERNAL_TOKEN 至少需要 32 字符")
 	}
-	if config.DBPath == "" {
+	config.DBDriver = strings.ToLower(strings.TrimSpace(config.DBDriver))
+	if config.DBDriver == "" {
+		config.DBDriver = "sqlite"
+	}
+	if config.DBDriver != "sqlite" && config.DBDriver != "mysql" {
+		return nil, fmt.Errorf("BACKEND_DB_DRIVER 只支持 sqlite 或 mysql")
+	}
+	if config.DBDriver == "sqlite" && config.DBPath == "" {
 		return nil, fmt.Errorf("BACKEND_DB 不能为空")
 	}
 	if len(config.Scenes) == 0 || config.Scenes[config.DefaultScene] == "" {
@@ -46,7 +52,7 @@ func New(config Config) (*Server, error) {
 			return nil, err
 		}
 	}
-	db, lock, err := openStore(config.DBPath)
+	db, err := openStore(config)
 	if err != nil {
 		return nil, err
 	}
@@ -61,17 +67,23 @@ func New(config Config) (*Server, error) {
 			client.Timeout = defaultClient().Timeout
 		}
 	}
-	return &Server{db: db, lock: lock, config: config, client: client}, nil
+	return &Server{db: db, config: config, client: client}, nil
 }
 
 func (s *Server) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	err := s.db.Close()
-	if e := s.lock.Close(); err == nil {
-		err = e
-	}
-	return err
+	return s.db.Close()
+}
+
+// Health 与业务操作串行，避免在同一 MySQL 连接的事务/结果流中插入探活。
+// 超时从获得锁后计算，不把排队时间误判为数据库断线。
+func (s *Server) Health() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return s.db.PingContext(ctx)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -81,7 +93,7 @@ func (s *Server) Handler() http.Handler {
 			writeError(w, &apiError{http.StatusMethodNotAllowed, "只允许 GET"})
 			return
 		}
-		if err := s.db.PingContext(r.Context()); err != nil {
+		if err := s.Health(); err != nil {
 			writeError(w, unavailable("数据库不可用"))
 			return
 		}
@@ -285,7 +297,7 @@ func (s *Server) checkpoint(ctx context.Context, raw json.RawMessage) (any, erro
 		return nil, bad("无效角色快照")
 	}
 	// 单 Backend + 全局串行锁使归属提交与检查点更新共享同一串行化边界。
-	// 若将来多副本或换数据库，此条件更新仍要与归属行锁/事务方案一起设计。
+	// SQLite 文件锁 / MySQL 会话锁共同保证只有一个 Backend；本实现不支持多副本。
 	result, err := s.db.ExecContext(ctx, "UPDATE roles SET x=?,y=? WHERE role_id=? AND scene_id=? AND owner_epoch=? AND session_epoch=? AND NOT EXISTS(SELECT 1 FROM migrations WHERE role_id=? AND status NOT IN ('DONE','ABORTED'))", r.X, r.Y, r.RoleID, r.SceneID, r.OwnerEpoch, r.SessionEpoch, r.RoleID)
 	if err != nil {
 		return nil, err
@@ -316,15 +328,12 @@ func (s *Server) claim(ctx context.Context, raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO claims(operation_id,role_id) VALUES(?,?)", "welcome:"+req.RoleID, req.RoleID)
-	if err != nil {
+	_, err = tx.ExecContext(ctx, "INSERT INTO claims(operation_id,role_id) VALUES(?,?)", "welcome:"+req.RoleID, req.RoleID)
+	granted := err == nil
+	if err != nil && !uniqueViolation(err) {
 		return nil, err
 	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if n == 1 {
+	if granted {
 		if _, err = tx.ExecContext(ctx, "UPDATE roles SET coins=coins+100 WHERE role_id=?", req.RoleID); err != nil {
 			return nil, err
 		}
@@ -336,7 +345,7 @@ func (s *Server) claim(ctx context.Context, raw json.RawMessage) (any, error) {
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"coins": coins, "granted": n == 1}, nil
+	return map[string]any{"coins": coins, "granted": granted}, nil
 }
 
 func (s *Server) route(r Role) Route { return Route{Role: r, SceneURL: s.config.Scenes[r.SceneID]} }

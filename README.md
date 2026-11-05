@@ -21,12 +21,12 @@ flowchart LR
     G -->|移动 / AOI 查询| S2[C++ scene-2]
     B -->|入场 / 迁移协调| S1
     B -->|入场 / 迁移协调| S2
-    B --> D[(SQLite 持久卷)]
+    B --> D[(SQLite / 指定 MySQL)]
 ```
 
 已定义的演示闭环：注册与登录、权威移动、邻近玩家视图、两场景切换、断线重连、一次性领取 100 金币。位置定期保存；金币与领取记录使用事务落盘。两个场景是两个独立进程，可以放在不同机器。
 
-**这不是完整 MMO 产品。** 当前实现采用 HTTP/JSON、网关轮询场景视图和单实例 SQLite Backend；没有 NPC、技能战斗、跨区无缝世界、自动场景故障迁移及生产账号系统。详细约束见 [协议](docs/PROTOCOL.md)；长期目标与当前 MVP 应分开阅读，见 [架构设计](ARCHITECTURE.md)。
+**这不是完整 MMO 产品。** 当前实现采用 HTTP/JSON、网关轮询场景视图和单实例 Backend（可选 SQLite / MySQL）；没有 NPC、技能战斗、跨区无缝世界、自动场景故障迁移及生产账号系统。详细约束见 [协议](docs/PROTOCOL.md)；长期目标与当前 MVP 应分开阅读，见 [架构设计](ARCHITECTURE.md)。
 
 ## 本机启动
 
@@ -116,7 +116,9 @@ docker run --rm -it --network host \
 
 完整的构建、镜像传输、配置、启动顺序、TLS、防火墙、备份与恢复步骤见 [DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
-SQLite 数据位于 Backend 的 `/app/data`，本机命名卷是 `mmo-demo-backend-data`。**只运行一个 Backend，不要对它执行副本扩容，也不要让多个主机共享同一个 SQLite 文件。** 进程锁防止同一数据库被多个 Backend 同时打开，不能替代数据库高可用。
+需要连接指定的 MySQL 时，配置 `BACKEND_DB_DRIVER=mysql` 和 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`，详见 [MySQL 配置与切换](docs/MYSQL.md)。修改地址无需重编镜像；本机还可用 `-mysql-host`、`-mysql-port` 参数覆盖环境变量。
+
+默认 SQLite 数据位于 Backend 的 `/app/data`，本机命名卷是 `mmo-demo-backend-data`。**两种数据库模式都只运行一个 Backend，不要执行副本扩容。** SQLite 文件锁和 MySQL 会话锁防止同一库被多个 Backend 同时打开，不能替代数据库高可用。
 
 ```bash
 docker compose stop gateway

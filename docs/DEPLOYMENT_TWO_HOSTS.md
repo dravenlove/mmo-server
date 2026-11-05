@@ -2,6 +2,8 @@
 
 2 核 2 GB VPS 建议使用 [网上镜像仓库部署](REGISTRY_DEPLOYMENT.md)，直接拉取已构建镜像；也可使用 [离线镜像包](PREBUILT_IMAGES.md)。以下的网络、密钥和数据卷配置适用于这两种方式，目标机无需编译。
 
+默认数据库是 A 上的 SQLite。连接已有 MySQL 时，在 A 的 env 中填写可修改的数据库地址与账号，详见 [MySQL 配置](MYSQL.md)；Gateway 和 B 的场景服务不直接连接 MySQL，下面的卷说明与示意图对应默认 SQLite 模式。
+
 四个服务实例可以放在两台主机上运行。当前推荐配置：
 
 | 主机 | 运行内容 | 对外端口 |

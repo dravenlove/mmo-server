@@ -185,6 +185,9 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	source, target := newFakeScene(t), newFakeScene(t)
 	cfg := Config{Token: testToken, DBPath: filepath.Join(t.TempDir(), "state.db"), Scenes: map[string]string{"scene-1": source.server.URL, "scene-2": target.server.URL}, DefaultScene: "scene-1"}
+	if mysql, ok := testMySQLConfig(t); ok {
+		cfg.DBDriver, cfg.MySQL = "mysql", mysql
+	}
 	s, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
