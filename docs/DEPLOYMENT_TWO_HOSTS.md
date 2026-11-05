@@ -1,172 +1,352 @@
-# 两台 Linux 主机部署
+# 统一部署流程：gateway + scene + MySQL
 
-本文统一使用 `gateway`（网关与 Backend 主机）和 `scene`（场景主机）。已有部署采用旧文件名或旧项目名时，先看 [配置改名迁移步骤](DEPLOYMENT_NAMING_MIGRATION.md)，复用原 env 和数据库卷。
+这份文档是两台应用 VPS 的部署入口。主流程使用已经发布的 Docker 镜像和已有 MySQL，VPS 只拉取、启动，不进行 Go/C++ 编译。
 
-小配置 VPS 建议使用 [网上镜像仓库部署](REGISTRY_DEPLOYMENT.md)，直接拉取已构建镜像；也可使用 [离线镜像包](PREBUILT_IMAGES.md)。以下的网络、密钥和数据卷配置适用于这两种方式，目标机无需编译。
+- [首次部署](#fresh)：按第 1–7 步完成私网联调。
+- [已有部署更新](#updates)：保留原配置、密钥和数据，按维护窗口更新。
+- [停止与恢复](#operations)：日常操作顺序。
+- [常见问题](#troubleshooting)：按具体症状定位。
 
-默认数据库是 `gateway` 上的 SQLite。连接已有 MySQL 时，在 `gateway` 的 env 中填写可修改的数据库地址与账号，详见 [MySQL 配置](MYSQL.md)；Gateway 和 `scene` 的场景服务不直接连接 MySQL，下面的卷说明与示意图对应默认 SQLite 模式。
+## 先确认主机和当前状态
 
-四个服务实例可以放在两台主机上运行。当前推荐配置：
+| 角色 | 机器 | 运行内容 | 配置文件 |
+| --- | --- | --- | --- |
+| `gateway` | Ubuntu 24.04.4 LTS，2GB 内存 | Go Gateway、Go Backend | `deploy/gateway-host.env` |
+| `scene` | OpenCloudOS 9.6，4GB 内存 | C++ scene-1、scene-2 | `deploy/scene-host.env` |
+| `mysql` | 已有 MySQL 服务 | 账号、金币、角色快照、迁移记录 | 地址和账号填在 gateway 的 env 中 |
 
-| 主机 | 运行内容 | 对外端口 |
-| --- | --- | --- |
-| `gateway`：Ubuntu 24.04.4 LTS，示例私网 IP `10.20.0.11` | Go Gateway、Go Backend、SQLite 持久卷 | 玩家入口 TCP 7000；8080 健康检查仅回环地址 |
-| `scene`：OpenCloudOS 9.6，示例私网 IP `10.20.0.22` | C++ scene-1、C++ scene-2 两个容器 | 私网 TCP 9001、9002，仅允许 `gateway` 与受控运维来源访问 |
+下文使用可替换的示例地址：`gateway=10.20.0.11`、`scene=10.20.0.22`、`mysql=10.20.0.30:3306`。部署时替换为实际地址；角色名称本身不会创建 DNS 记录。
 
-Backend 通过`gateway` 主机 的 Compose 网络提供 `http://backend:8081`，没有发布宿主机 8081 端口。数据库嵌入 Backend，不需要第三台数据库机器。`gateway` 的 Gateway 与 Backend 都会访问 `scene` 的两个场景端口。
+当前发布版本：`mvp-20261105-mysql`，镜像前缀：`ghcr.io/dravenlove/mmo-server`。两台使用相同版本。现有镜像为 `linux/amd64`，目标机 `uname -m` 应输出 `x86_64`。
 
-```mermaid
-flowchart LR
-    C[客户端] -->|TCP 7000 / TLS| G
-    subgraph GatewayHost[gateway 主机]
-        G[Go Gateway] -->|容器网络| K[Go Backend]
-        K --> V[(SQLite 持久卷)]
-    end
-    subgraph SceneHost[scene 主机]
-        S1[C++ scene-1 / 9001]
-        S2[C++ scene-2 / 9002]
-    end
-    G --> S1
-    G --> S2
-    K --> S1
-    K --> S2
-```
-
-这套布局用于搭建和验证 MVP。`gateway` 故障会中断登录和连接，`scene` 故障会中断两个场景；目前没有自动容灾。两机能承载多少玩家仍需结合硬件和玩法压测，不能从机器数量推算。
-
-## 1. 准备两台机器
-
-两台机器都安装并启动 Docker Engine 与 Compose，架构与构建镜像一致。先按 [GitHub 与 VPS 操作指南](GITHUB_VPS.md) 安装工具，再在两台机器分别执行：
+先在两台查看现有项目：
 
 ```bash
-git clone https://github.com/dravenlove/mmo-server.git
-cd mmo-server
+sudo docker compose ls
+```
+
+- 尚未启动服务：进入下面的首次部署。
+- 已有 `mmo-gateway` / `mmo-scene`：使用[更新流程](#updates)，不要覆盖原 env。
+- 已使用旧文件名或旧项目名运行：先完成[配置改名迁移](DEPLOYMENT_NAMING_MIGRATION.md)，然后按本文继续。只更新命名无需重新构建镜像。
+- 原来使用 SQLite 且需要保留玩家：先备份并安排数据迁移；改成 MySQL 连接参数不会自动复制旧数据。
+
+<a id="fresh"></a>
+## 1. 两台检查 Docker 并更新代码
+
+分别在 `gateway`、`scene` 执行：
+
+```bash
+uname -m
+sudo docker version
+sudo docker compose version
+```
+
+Docker 需要显示 Server 信息，Compose 需要支持 `up --wait`。你已经安装好 Docker 时继续下一步；全新机器先按[系统安装补充](GITHUB_VPS.md#2-安装-docker)安装。宿主机需有 `git`、`curl`、`openssl`；缺失时在 Ubuntu 用 `sudo apt-get install -y git curl openssl`，OpenCloudOS 用 `sudo dnf install -y git curl openssl` 安装。Go、GCC 和 CMake 不需要安装。
+
+两台分别克隆或更新仓库：
+
+```bash
+cd ~
+if [ -d mmo-server/.git ]; then
+  cd mmo-server
+  git pull --ff-only
+else
+  git clone https://github.com/dravenlove/mmo-server.git
+  cd mmo-server
+fi
 git rev-parse HEAD
 ```
 
-核对两台机器的提交号一致。也可使用相同版本的源码包；以下命令均从源码根目录执行，部署文件中的 `build.context: ..` 会指向该目录。文档中的 `docker` 命令假设当前用户有 Docker 权限；普通 sudo 用户改用 `sudo docker`，无需为了运行本项目额外开放 Docker 管理端口。
+后续命令均在 `~/mmo-server` 执行。两台的源码提交号应一致。实际 env 文件被 Git 忽略，更新代码不会替你填写或迁移配置；已有源码修改需先保存再更新。
 
-示例假设两机能通过 IPv4 私网或 VPN 地址互通。没有私网时，先建立加密 VPN，把后面的示例地址替换为 VPN 地址；当前内部 HTTP 共享密钥不会加密流量。`scene` 的 9001/9002 不向整个公网开放。防火墙应依据 `scene` 实际看到的 `gateway` 出站地址限制来源，并确认 Docker 转发规则确实生效；不要假设容器来源一定是 `gateway` 的某个固定接口地址。
+## 2. 准备指定 MySQL
 
-在可信终端生成一次密钥：
+这一步在你已有的 **MySQL 管理端**执行，不是在 scene 容器里执行。要求 MySQL 8.0.16+，使用可写主实例。
+
+```sql
+SELECT VERSION();
+```
+
+已有独立数据库和应用账号时继续使用。需要新建时，由数据库管理员执行下面的示例，并替换密码与授权来源地址：
+
+```sql
+CREATE DATABASE mmo_game CHARACTER SET utf8mb4;
+CREATE USER 'mmo_app'@'10.20.0.11' IDENTIFIED BY '替换为实际密码';
+GRANT SELECT, INSERT, UPDATE, CREATE, INDEX, REFERENCES
+  ON mmo_game.* TO 'mmo_app'@'10.20.0.11';
+```
+
+授权来源应为 MySQL 实际看到的 gateway 出口地址。Backend 首次启动会在指定库中创建三张业务表，不会创建数据库或账号。MySQL 参数只配置在 gateway 主机，scene 不需要数据库密码。
+
+网络需满足：
+
+| 来源 | 目标 | 端口 | 用途 |
+| --- | --- | --- | --- |
+| gateway 的两个容器 | scene 私网/VPN地址 | 9001、9002 | 场景调用 |
+| gateway 的 Backend 容器 | 指定 MySQL | 3306 或配置的端口 | 数据持久化 |
+| 联调客户端 | gateway 绑定地址 | 7000 | 玩家连接 |
+
+scene 端口和 MySQL 端口仅允许相应私网/VPN来源及受控运维来源。Backend 不发布宿主机 8081，gateway 健康端口 8080 只绑定回环。内部 HTTP 的共享密钥提供认证，跨机流量使用可信私网或加密 VPN。
+
+## 3. 生成一次内部密钥
+
+首次部署时，在可信终端执行一次：
 
 ```bash
 openssl rand -hex 32
 ```
 
-两台机器使用同一个值；不要分别生成两份不同密钥。实际 env 文件权限设为 `600`。
+将生成的同一个值填入两台 env 的 `INTERNAL_TOKEN`。这是服务之间的密钥；MySQL 使用自己的账号密码，玩家使用客户端保存的登录凭据。已有部署继续保留原密钥，更新镜像无需重新生成。
 
-## 2. 先启动`scene` 主机 的场景
+## 4. 配置并启动 scene
 
-在 **`scene`** 上：
+以下操作只在 **scene 主机**执行。
+
+先创建实际配置文件；已经存在时不会覆盖：
 
 ```bash
+cd ~/mmo-server
 test -f deploy/scene-host.env || (umask 077; cp deploy/scene-host.env.example deploy/scene-host.env)
 chmod 600 deploy/scene-host.env
 ```
 
-编辑 `deploy/scene-host.env`：填写 `INTERNAL_TOKEN`，将 `SCENE_BIND_IP` 改为 **`scene` 实际网卡上的私网或 VPN IPv4 地址**。
+用你熟悉的编辑器或 SFTP 编辑 `deploy/scene-host.env`，整理为下面的配置。填入密钥，并将示例 IP 替换为 scene 实际网卡上的地址：
 
-```bash
-docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene config --quiet
-docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene up -d --build --wait
-docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene ps
+```dotenv
+INTERNAL_TOKEN=
+MMO_IMAGE_PREFIX=ghcr.io/dravenlove/mmo-server
+MMO_IMAGE_TAG=mvp-20261105-mysql
+SCENE_BIND_IP=10.20.0.22
+TICK_HZ=20
+AOI_RADIUS=30
+MOVE_SPEED=6
 ```
 
-两个场景使用同一份源码和镜像，分别以 `scene-1:9001` 和 `scene-2:9002` 运行。
-
-## 3. 再启动`gateway` 主机 的网关与业务
-
-在 **`gateway`** 上：
+校验、拉取并启动。两个场景共用同一个镜像，只拉取一次：
 
 ```bash
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml pull --policy always scene1
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml up -d --no-build --pull never --wait
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml ps
+```
+
+预期项目为 `mmo-scene`，`scene1`、`scene2` 都显示 healthy。任意命令报错时先处理，再继续下一步。
+
+## 5. 配置并启动 gateway
+
+以下操作只在 **gateway 主机**执行。
+
+```bash
+cd ~/mmo-server
 test -f deploy/gateway-host.env || (umask 077; cp deploy/gateway-host.env.example deploy/gateway-host.env)
 chmod 600 deploy/gateway-host.env
 ```
 
-编辑 `deploy/gateway-host.env`：
+编辑 `deploy/gateway-host.env`。填入与 scene 相同的内部密钥，填写真实数据库账号、密码和库名，并替换三个示例 IP：
 
-- `INTERNAL_TOKEN`：与 `scene` 完全相同。
-- `SCENE_HOST_IP`：与 `scene` 的 `SCENE_BIND_IP` 相同，`gateway` 的两个容器必须都能访问它。
-- `GATEWAY_BIND_IP`：`gateway` 实际网卡地址。公网通过 NAT 映射时填写本机实际绑定地址；也可显式用 `0.0.0.0` 监听所有网卡，并配好入口防火墙。
-- `BACKEND_VOLUME_NAME`：新部署保留默认值。已有数据迁移见后文。
-- 公网入口填写 `TLS_CERT_DIR`、`TLS_CERT_FILE`、`TLS_KEY_FILE`；证书 SAN、权限和客户端 CA 步骤见 [通用部署文档的 TLS 部分](DEPLOYMENT.md#4-网关-tls)。其中环境文件应换为本节的 `gateway-host.env`。
-
-先从 `gateway` 检查 `scene`，替换下面的示例地址：
-
-```bash
-curl --fail http://10.20.0.22:9001/healthz
-curl --fail http://10.20.0.22:9002/healthz
+```dotenv
+INTERNAL_TOKEN=
+MMO_IMAGE_PREFIX=ghcr.io/dravenlove/mmo-server
+MMO_IMAGE_TAG=mvp-20261105-mysql
+SCENE_HOST_IP=10.20.0.22
+GATEWAY_BIND_IP=10.20.0.11
+BACKEND_DB_DRIVER=mysql
+MYSQL_HOST=10.20.0.30
+MYSQL_PORT=3306
+MYSQL_USER=mmo_app
+MYSQL_PASSWORD=''
+MYSQL_DATABASE=mmo_game
+MYSQL_TLS=false
+BACKEND_VOLUME_NAME=mmo-two-host-backend-data
+TLS_CERT_DIR=./certs
+TLS_CERT_FILE=
+TLS_KEY_FILE=
 ```
 
-然后启动 `gateway`：
+`INTERNAL_TOKEN` 和 `MYSQL_PASSWORD` 的空值必须按实际环境填写。密码用单引号保存，避免 `$` 被 Compose 当作变量；包含单引号时按 [env 文件语法](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/#env-file-syntax)转义。实际配置不提交 Git。
+
+这里先将玩家入口绑定到 gateway 私网地址用于联调。`MYSQL_TLS=false` 用于受控私网/隧道；数据库要求 TLS 时使用 `true`，证书须受信任且匹配 `MYSQL_HOST`。
+
+校验、拉取并启动：
 
 ```bash
-docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway config --quiet
-docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway up -d --build --wait
-docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway ps
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml pull --policy always backend gateway
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml up -d --no-build --pull never --wait
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml ps
 curl --fail http://127.0.0.1:8080/readyz
 ```
 
-`gateway` 内部通过 `depends_on` 等待 Backend 健康。跨机器没有自动健康依赖，因此先启动 `scene`；`readyz` 检查网关到 Backend，不检查场景完整业务。
+预期项目为 `mmo-gateway`，`backend`、`gateway` 都 healthy，readyz 返回成功。Backend 日志应包含 `database=mysql`。MySQL 无法连接、权限不足或库名错误时先修复，不进入下一步。
 
-从 **`gateway` 的网关和 Backend 容器内部** 再检查到 `scene` 的路由，避免宿主机可达但容器不可达：
+## 6. 验证容器之间真的互通
 
-```bash
-docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway exec gateway curl --fail http://10.20.0.22:9001/healthz
-docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway exec gateway curl --fail http://10.20.0.22:9002/healthz
-docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway exec backend curl --fail http://10.20.0.22:9001/healthz
-docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway exec backend curl --fail http://10.20.0.22:9002/healthz
-```
-
-## 4. 客户端联调
-
-在有 Go 的开发机或 `gateway` 上运行，替换为客户端能访问的 `gateway` 地址：
+在 **gateway 主机**执行，把示例地址替换为 scene 的实际私网/VPN地址：
 
 ```bash
-mkdir -p tokens
-chmod 700 tokens
-go run ./cmd/client -addr 10.20.0.11:7000 -name alice -token-file ./tokens/alice.token
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml exec gateway curl --fail --connect-timeout 3 --max-time 5 http://10.20.0.22:9001/healthz
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml exec gateway curl --fail --connect-timeout 3 --max-time 5 http://10.20.0.22:9002/healthz
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml exec backend curl --fail --connect-timeout 3 --max-time 5 http://10.20.0.22:9001/healthz
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml exec backend curl --fail --connect-timeout 3 --max-time 5 http://10.20.0.22:9002/healthz
 ```
 
-该命令是私网明文演示。启用网关 TLS 后，客户端使用证书对应域名并加 `-tls`；私有 CA 再加 `-ca /path/to/ca.pem`。没有 Go 时可按 [README 的容器客户端步骤](../README.md#连接客户端) 使用客户端镜像，将 `-addr` 改为 `gateway`。
+四次都应返回成功。readyz 只覆盖网关到 Backend 的就绪检查，不能代替这四次检查和下一步的真实业务验收。
 
-进入后执行：
+## 7. 用容器客户端完成业务验收
+
+在 **gateway 主机**运行，不需要在 VPS 编译客户端。`-addr` 使用 gateway 在第 5 步绑定的实际地址：
+
+```bash
+sudo docker pull ghcr.io/dravenlove/mmo-server/client:mvp-20261105-mysql
+sudo docker run --rm -it --pull never --network host \
+  --mount type=volume,source=mmo-client-tokens,target=/app/tokens \
+  ghcr.io/dravenlove/mmo-server/client:mvp-20261105-mysql \
+  -addr 10.20.0.11:7000 -name deploy-check -token-file /app/tokens/deploy-check.token
+```
+
+逐行输入以下命令；执行 `move 1 0` 后等待约 1 秒，再输入下一条 `view`，让场景完成 Tick。不要整块立即粘贴：
 
 ```text
+view
 move 1 0
 view
+claim
+claim
 transfer scene-2
-claim
-claim
+view
 quit
 ```
 
-用同一 token 文件重登，确认场景归属和金币保留。第二个终端使用另一角色名和 token 文件，可以验证同场景的附近玩家视图。场景重启后的坐标可能回退至最近成功保存的位置。
+验收标准：能注册并登录、移动后坐标变化、奖励总额只有 100 金币、传送后场景为 scene-2。新账号第一次 claim 应为 granted=true，第二次为 false；已经领取过的账号再次领取仍为 false。
 
-## 5. 停止、数据与已有部署迁移
+再次运行同一客户端命令，应使用卷内原凭据登录，角色和领取记录保留。客户端 token 卷和 MySQL 数据库分别保存凭据与玩家数据，都需要保留。至此私网最小部署完成。
 
-停止时先在 **`gateway`** 上执行：
+## 8. 开放公网入口时再配置 TLS
 
-```bash
-docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway stop gateway
-docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway stop backend
+公网玩家只访问 gateway 的 TCP 7000。在 gateway 的项目根目录执行 `mkdir -p deploy/certs`，将匹配玩家域名的有效证书链 `fullchain.pem` 和私钥 `privkey.pem` 放入该目录。然后修改 `deploy/gateway-host.env`：
+
+```dotenv
+GATEWAY_BIND_IP=0.0.0.0
+TLS_CERT_DIR=./certs
+TLS_CERT_FILE=/certs/fullchain.pem
+TLS_KEY_FILE=/certs/privkey.pem
 ```
 
-再在 **`scene`** 上执行：
+证书目录只读挂入容器，赋予运行组 10001 读取权限并重建网关：
 
 ```bash
-docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene stop
+sudo chown root:10001 deploy/certs deploy/certs/fullchain.pem deploy/certs/privkey.pem
+sudo chmod 750 deploy/certs
+sudo chmod 640 deploy/certs/fullchain.pem deploy/certs/privkey.pem
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml up -d --no-build --pull never --force-recreate --wait gateway
 ```
 
-恢复时仍先 `scene` 后 `gateway`，使用同一配置运行 `up -d --wait`。`gateway` 的 SQLite 命名卷默认是 `mmo-two-host-backend-data`；`down -v` 会删除它，不能作为日常停止方式。`scene` 没有数据库卷。
+域名解析应指向 gateway 的玩家入口地址，云安全组允许玩家访问 TCP 7000。客户端的 `-addr` 使用证书域名并加 `-tls`；自签 CA 的详细参数见 [TLS 补充](DEPLOYMENT.md#4-网关-tls)。scene 的 9001/9002、Backend 和数据库继续走私网/VPN，不作为玩家入口。Docker 发布端口的访问限制还应核对云安全组及转发链，参见 [Docker 防火墙说明](https://docs.docker.com/engine/network/packet-filtering-firewalls/)。
 
-如果此前已经运行过根 Compose 或单角色部署，先停掉旧 Gateway、Backend 和场景并备份，避免两套服务竞争端口或写同一数据库。同一 Docker 主机上继续使用原数据时，把 `BACKEND_VOLUME_NAME` 改为原卷名：根 Compose 默认是 `mmo-demo-backend-data`，原独立 Backend 默认是 `mmo-backend-data`。迁往另一主机时，按 [备份恢复步骤](DEPLOYMENT.md#7-备份与恢复) 先将完整数据目录恢复到 `gateway` 的新卷。卷名相同不会在两台机器之间自动传输数据。不要直接切换到空默认卷后误以为原账号丢失。
+<a id="updates"></a>
+## 9. 已有部署的后续更新
 
-对两机方案进行常规备份恢复时，通用文档命令中的 Compose 文件、环境文件、项目名分别替换为 `deploy/gateway-host.compose.yaml`、`deploy/gateway-host.env`、`mmo-gateway`，源卷名称使用 `gateway` 配置的 `BACKEND_VOLUME_NAME`。恢复旧数据库前同时停掉 `gateway` 的两个服务和 `scene` 的两个场景，避免旧场景内存覆盖恢复的数据。
+先在 GitHub 发布并确认新镜像标签，然后在维护窗口更新。文档或配置改名可继续使用现有应用镜像；应用源码变更使用新标签。
 
-两机配置支持现场构建。若已在构建机生成镜像，可以依照通用部署文档 `docker image save/load` 分发：`gateway` 需要 `mmo/backend` 和 `mmo/gateway`，`scene` 需要 `mmo/scene`；已加载相同标签后使用 `up -d --no-build --wait`。
+1. 两台执行 `git pull --ff-only`，核对源码。保留原 env、内部密钥、数据库配置、证书和卷名。
+2. 两台 env 的 `MMO_IMAGE_TAG` 更新为同一已发布标签。
+3. 先完成两台镜像拉取，再停止当前服务。
 
-2 核 2 GB VPS 建议将构建移到开发机，按 [预构建镜像操作指南](PREBUILT_IMAGES.md) 生成两份压缩镜像包。服务器仍保留自己的 env 和数据库，只加载相应镜像并启动容器。
+在 **scene 主机**提前拉取：
 
-角色命名的两机配置通过 Compose 展开与字段检查。本机 Linux Docker 的 SQLite / MySQL 业务验证与容量边界见 [验证记录](VALIDATION.md)；两台真实 VPS 互联、实际证书和数据库权限仍需在目标环境验收。
+```bash
+cd ~/mmo-server
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml pull --policy always scene1
+```
+
+在 **gateway 主机**提前拉取：
+
+```bash
+cd ~/mmo-server
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml pull --policy always backend gateway
+```
+
+拉取成功后，按 [停止顺序](#operations)停机并备份 MySQL，再按同节的恢复顺序启动。重做第 6、7 步验收。客户端需要重新登录；本 MVP 不提供无损滚动升级。
+
+若只改 MySQL 地址、端口或账号，无需新镜像。确认新目标库已有所需数据，在维护窗口修改 gateway env 后执行；已按下一节停止全部服务时，改用该节的完整恢复顺序：
+
+```bash
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml up -d --no-build --pull never --force-recreate --wait backend
+curl --fail http://127.0.0.1:8080/readyz
+```
+
+单独 restart 不会更新容器环境变量。切库也不会复制数据库，已有玩家时先停止入口并备份，地址变更后按 [恢复顺序](#operations)启动。
+
+<a id="operations"></a>
+## 10. 日常停止、恢复和备份
+
+**停止顺序：先 gateway 入口，再 Backend，最后 scene。**
+
+在 gateway 主机：
+
+```bash
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml stop gateway
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml stop backend
+```
+
+再在 scene 主机：
+
+```bash
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml stop
+```
+
+MySQL 模式下备份指定 MySQL 实例的数据。`BACKEND_VOLUME_NAME` 对应的本地卷不包含 MySQL 玩家数据；只有 SQLite 模式使用它保存数据库文件。SQLite 停机备份方法见[补充说明](DEPLOYMENT.md#7-备份与恢复)。
+
+**恢复顺序：MySQL 可用 → scene 健康 → gateway 健康。**
+
+先在 scene 主机：
+
+```bash
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml up -d --no-build --pull never --wait
+```
+
+再在 gateway 主机：
+
+```bash
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml up -d --no-build --pull never --wait
+curl --fail http://127.0.0.1:8080/readyz
+```
+
+保留客户端凭据卷和数据库。正常更新不使用 `down -v`；Backend 始终只运行一个实例。若版本涉及数据库格式变化，回退时同时考虑对应镜像、配置和停机备份，不能只回退 Git 提交。
+
+<a id="troubleshooting"></a>
+## 11. 常见问题按现象处理
+
+| 现象 | 优先检查 |
+| --- | --- |
+| couldn't find env file | 第 4、5 步是否在对应主机创建了实际 env；不能只保留 example |
+| 拉取镜像 denied / not found | 镜像前缀、标签、仓库可见性；当前发布镜像支持匿名拉取 |
+| 拉取超时 / DNS 错误 | VPS 到 GHCR 及镜像分发地址的网络；可用[离线镜像包](PREBUILT_IMAGES.md)替代下载 |
+| address not available | 绑定 IP 是否实际存在于这台主机；角色名称不是绑定地址 |
+| Backend 重启、MySQL 连接失败 | MYSQL_HOST/PORT、账号授权来源、库名、MySQL 版本和网络白名单 |
+| 数据库被其他 Backend 占用 | 是否仍有旧项目或第二个 Backend；按[旧命名迁移](DEPLOYMENT_NAMING_MIGRATION.md)检查 |
+| 都 healthy 但登录/移动失败 | 第 6 步容器互通，以及两台 INTERNAL_TOKEN 是否完全相同 |
+| 改完 env 没有生效 | 使用 up 重建对应容器；单独 restart 不会重新读取 env |
+
+在出错的主机查看日志：
+
+```bash
+# scene 主机
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml logs --tail 80 scene1 scene2
+```
+
+```bash
+# gateway 主机
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml logs --tail 80 backend gateway
+```
+
+配置校验使用 `config --quiet`，避免将密钥和密码整份打印出来。反馈问题时保留错误和阶段，隐藏实际密码、内部密钥及玩家 token。
+
+本机已验证 Linux Docker、SQLite / MySQL 业务流程和匿名拉取，范围见[验证记录](VALIDATION.md)。真实 VPS 私网路由、数据库账号权限、证书与容量仍需现场验收。
+
+补充资料按需使用：[系统安装](GITHUB_VPS.md)、[MySQL 参数与启动选项](MYSQL.md)、[镜像发布](REGISTRY_DEPLOYMENT.md)、[离线镜像包](PREBUILT_IMAGES.md)、[旧命名迁移](DEPLOYMENT_NAMING_MIGRATION.md)。

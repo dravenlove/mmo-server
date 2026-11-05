@@ -9,7 +9,7 @@
 
 文件名包含 `-host`，与仅部署单个服务的 `gateway.compose.yaml`、`scene.compose.yaml` 区分。下文中的旧路径和旧项目名仅用于识别已经运行的部署。
 
-新部署直接使用新模板。如果以前使用的是 `two-host-*.env` 和 `mmo-host-*`，需要在维护窗口按以下顺序切换；不要直接用新项目名启动另一组容器。
+新部署直接按 [统一部署流程](DEPLOYMENT_TWO_HOSTS.md#fresh)使用新模板。如果以前使用的是 `two-host-*.env` 和 `mmo-host-*`，需要在维护窗口按以下顺序切换；不要直接用新项目名启动另一组容器。
 
 ## 1. 两台更新代码，并复制原配置
 
@@ -50,7 +50,7 @@ sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.co
 sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-host-b down
 ```
 
-此时按使用的数据库方式备份：SQLite 按两机文档备份原卷，MySQL 按数据库维护流程备份。然后在 **`gateway` 主机**移除旧项目的容器和网络：
+此时按使用的数据库方式备份：SQLite 按 [SQLite 备份补充](DEPLOYMENT.md#7-备份与恢复)备份原卷，MySQL 按数据库维护流程备份。然后在 **`gateway` 主机**移除旧项目的容器和网络：
 
 ```bash
 sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-host-a down

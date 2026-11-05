@@ -1,5 +1,7 @@
 # Docker 构建慢：定位下载来源
 
+本页仅用于自行构建镜像时排查下载问题。两台 VPS 优先按 [统一部署流程](DEPLOYMENT_TWO_HOSTS.md)拉取现成镜像，无需在目标机编译。
+
 先看日志停在哪个 `RUN`，不要仅凭总时长判断编译性能。保留当前构建，在另一 SSH 终端做只读检查；确定原因后再决定是否中断。新一次构建可使用 Compose 的 `--progress plain`，显示完整输出。
 
 | 日志位置 | 当前在做什么 | 优先检查 |
@@ -93,7 +95,7 @@ sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.co
 sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway up -d --no-build --wait
 ```
 
-以上启动步骤针对尚未投入使用的首次部署。已有玩家和数据时，沿用 [维护窗口更新步骤](GITHUB_VPS.md#5-以后从-github-更新) 完成停机、备份和启动。
+以上启动步骤针对尚未投入使用的首次部署。已有玩家和数据时，沿用 [维护窗口更新步骤](DEPLOYMENT_TWO_HOSTS.md#updates) 完成停机、备份和启动。
 
 ### 不使用 Compose 构建时
 

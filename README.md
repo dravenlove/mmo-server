@@ -2,18 +2,16 @@
 
 一个可分别部署的服务端原型：Go 网关承接玩家长连接，Go Backend 管理账号、场景归属和持久化，两个独立 C++ SceneHost 推进实时移动和 AOI。Linux Docker 是部署目标；同机 Compose 用于演示，多机模板位于 `deploy/`。
 
-公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。Ubuntu 24.04.4 LTS + OpenCloudOS 9.6 两台 VPS 从零安装、克隆和更新，先看 [GitHub 与 VPS 操作指南](docs/GITHUB_VPS.md)，再按 [两机部署步骤](docs/DEPLOYMENT_TWO_HOSTS.md) 启动。
+公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。
 
-主机统一按角色命名：`gateway` 运行 Gateway 和 Backend，`scene` 运行两个 C++ 场景。已有部署更新到新文件名和项目名时，先按 [配置改名迁移步骤](docs/DEPLOYMENT_NAMING_MIGRATION.md) 保留原配置与数据库卷。
+**两台 VPS 部署从这里开始：[统一部署流程：gateway + scene + MySQL](docs/DEPLOYMENT_TWO_HOSTS.md)。** 依次完成配置、拉取现成镜像、启动与验收；VPS 不需要编译 Go/C++。同一份文档也包含后续更新、停机、恢复和排错。
 
-VPS 配置较小时，可使用 [本机构建镜像、VPS 加载运行](docs/PREBUILT_IMAGES.md)：在开发机打好 `gateway`/`scene` 两个镜像包，服务器执行 `docker load` 后以 `--no-build --pull never` 启动。
+| 主机角色 | 建议配置 | 运行内容 |
+| --- | --- | --- |
+| `gateway` | Ubuntu 24.04.4 LTS，2GB 内存 | Go Gateway + Go Backend，连接指定 MySQL |
+| `scene` | OpenCloudOS 9.6，4GB 内存 | 两个 C++ 场景容器 |
 
-也可以使用 [网上镜像仓库部署](docs/REGISTRY_DEPLOYMENT.md)：GitHub Actions 构建、验收后发布到 GHCR，VPS 直接 `docker compose pull`，不需要上传压缩包。
-
-```bash
-git clone https://github.com/dravenlove/mmo-server.git
-cd mmo-server
-```
+已有旧命名部署按主指南中的迁移入口处理，继续保留原密钥与数据。[镜像发布](docs/REGISTRY_DEPLOYMENT.md)、[离线打包](docs/PREBUILT_IMAGES.md)和[MySQL 参数](docs/MYSQL.md)是按需查阅的补充。
 
 ```mermaid
 flowchart LR
@@ -32,7 +30,7 @@ flowchart LR
 
 ## 本机启动
 
-本节会在**同一台机器**上构建并运行全部四个服务。Ubuntu + OpenCloudOS 两台 VPS 部署时，直接使用 [两机部署文档](docs/DEPLOYMENT_TWO_HOSTS.md) 的 `gateway`/`scene` 配置；Ubuntu 的构建列表应只有 Backend、Gateway，OpenCloudOS 应只有两个场景。
+本节会在**同一台机器**上构建并运行全部四个服务。Ubuntu + OpenCloudOS 两台 VPS 部署时，直接使用 [两机部署文档](docs/DEPLOYMENT_TWO_HOSTS.md) 的 `gateway`/`scene` 配置；VPS 按角色拉取已发布镜像并启动，不执行本节的构建命令。
 
 以下命令使用 Linux shell，要求 Docker Engine 运行中、支持 `docker compose`，并能拉取镜像、系统软件包和 Go 依赖。C++ 第三方头文件已随源码提供，构建场景时不再下载第三方源码。
 
@@ -110,13 +108,13 @@ docker run --rm -it --network host \
 
 ## 分别部署与持久化
 
-只有两台 Linux 主机时，使用 [两机部署文档](docs/DEPLOYMENT_TWO_HOSTS.md)：**`gateway` 放 Gateway、Backend 和 SQLite；`scene` 放两个 C++ 场景**。对应配置为 `deploy/gateway-host.compose.yaml` 与 `deploy/scene-host.compose.yaml`，各自配一份 env 文件即可。
+两台 Linux VPS 使用 [统一部署流程](docs/DEPLOYMENT_TWO_HOSTS.md)：**`gateway` 运行 Gateway 与 Backend、连接指定 MySQL；`scene` 运行两个 C++ 场景**。对应配置为 `deploy/gateway-host.compose.yaml` 与 `deploy/scene-host.compose.yaml`，各自配一份实际 env 文件。
 
-当前两台 VPS 的建议分配为 **`gateway` = Ubuntu 24.04.4 LTS，`scene` = OpenCloudOS 9.6**。应用在容器内构建，宿主机不必安装 Go、GCC 或 CMake；两个系统的 Docker 安装方式见 [系统准备](docs/GITHUB_VPS.md#2-安装-docker)。
+当前两台 VPS 的建议分配为 **`gateway` = Ubuntu 24.04.4 LTS，`scene` = OpenCloudOS 9.6**。应用镜像由 GitHub Actions 或开发机构建，VPS 只负责拉取和运行；两个系统的 Docker 安装方式见 [系统准备](docs/GITHUB_VPS.md#2-安装-docker)。
 
 `deploy/backend.compose.yaml`、`deploy/scene.compose.yaml`、`deploy/gateway.compose.yaml` 可分别在不同 Linux 主机启动。两台场景机共用场景模板，使用不同的 `SCENE_ID`、地址与端口；Backend 的 `SCENES` 必须填写网关和 Backend 都能访问的真实私网地址。跨主机不能使用本机 Compose 的 `backend`、`scene1` 等容器名。
 
-完整的构建、镜像传输、配置、启动顺序、TLS、防火墙、备份与恢复步骤见 [DEPLOYMENT.md](docs/DEPLOYMENT.md)。
+需要将每个服务拆到独立主机时，另看 [通用部署与 TLS 补充](docs/DEPLOYMENT.md)。本节下面不带 `-f` 的 `docker compose` 命令用于根目录同机演示，VPS 的角色命令以统一部署流程为准。
 
 需要连接指定的 MySQL 时，配置 `BACKEND_DB_DRIVER=mysql` 和 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`，详见 [MySQL 配置与切换](docs/MYSQL.md)。修改地址无需重编镜像；本机还可用 `-mysql-host`、`-mysql-port` 参数覆盖环境变量。
 

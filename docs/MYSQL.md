@@ -1,6 +1,6 @@
 # Backend 连接指定的 MySQL
 
-两台应用主机统一称为 `gateway` 和 `scene`。已有部署采用旧项目名时，先按 [配置改名迁移](DEPLOYMENT_NAMING_MIGRATION.md) 保留原配置与数据库，再使用本文命令。
+**首次部署按 [统一部署流程](DEPLOYMENT_TWO_HOSTS.md)顺序执行**。本页补充数据库参数、本机启动选项和存储约束；两台主机分别称为 `gateway` 和 `scene`。
 
 Backend 可通过配置选择 SQLite 或指定的 MySQL，Gateway 和 C++ 场景不直接连接数据库。修改地址、端口、账号或库名后重建 Backend 容器即可，不需要重新编译镜像。此功能需要包含 MySQL 支持的新镜像，例如 `mvp-20261105-mysql`；旧版 `mvp-20261104` 只有 SQLite 支持。
 
@@ -48,21 +48,16 @@ MMO_IMAGE_TAG=mvp-20261105-mysql
 
 ## 3. 启动与修改地址
 
-首次部署先按 [镜像仓库部署](REGISTRY_DEPLOYMENT.md) 拉取镜像，并启动 `scene` 的两个场景。然后在 `gateway` 执行：
+首次部署的创建配置、拉取镜像、启动与验收统一维护在 [主部署流程](DEPLOYMENT_TWO_HOSTS.md#fresh)。以后只改地址、端口或账号，编辑 gateway 的实际 env 后，在维护窗口执行：
 
 ```bash
 cd ~/mmo-server
-git pull --ff-only
-chmod 600 deploy/gateway-host.env
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway config --quiet
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway pull --policy always backend gateway
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway up -d --no-build --pull never --wait
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --quiet
+sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml up -d --no-build --pull never --force-recreate --wait backend
 curl --fail http://127.0.0.1:8080/readyz
 ```
 
-以后只改数据库地址或端口时，编辑同一 env 文件的 `MYSQL_HOST`、`MYSQL_PORT`，再执行最后的 `up` 命令；同一镜像无需重新构建或重新拉取。可追加 `--force-recreate backend` 明确只重建 Backend。
-
-仅改变地址不会复制数据库。新地址必须指向已经具备所需数据的库，或明确作为空库重新开始。已有玩家时按维护窗口停机并备份，再执行地址变更或版本更新。
+同一镜像无需重新构建或拉取。仅改变地址不会复制数据；新目标库须已有所需数据，或明确作为空库开始。已有玩家时先按 [停止与备份流程](DEPLOYMENT_TWO_HOSTS.md#operations)安排停机、备份，再修改并恢复。仅 `restart` 不会载入新的容器环境变量。
 
 ## 4. 本机和可选启动参数
 

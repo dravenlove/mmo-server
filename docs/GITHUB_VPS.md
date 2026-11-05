@@ -1,15 +1,10 @@
-# GitHub 克隆与两台 VPS 部署
+# 系统准备补充：Docker 安装与 GitHub 克隆
 
-主机按 `gateway`、`scene` 角色命名。已经使用旧配置启动过服务时，更新代码后先按 [配置改名迁移步骤](DEPLOYMENT_NAMING_MIGRATION.md) 切换项目，保留原运行配置和数据。
+本页仅补充 Ubuntu / OpenCloudOS 系统准备。**正式部署入口是 [统一部署流程](DEPLOYMENT_TWO_HOSTS.md)**，已安装好 Docker 时直接从那里开始。
 
-仓库：<https://github.com/dravenlove/mmo-server>，公开可读。两台 VPS 使用 HTTPS 克隆即可，不需要 GitHub 账号、访问令牌或 SSH 部署密钥。
+仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)，公开可读。两台 VPS 使用 HTTPS 克隆即可，不需要 GitHub 账号、访问令牌或 SSH 部署密钥。应用镜像从 GHCR 拉取，宿主机不需要安装 Go、GCC 或 CMake。
 
-| 机器 | 系统 | 部署内容 | 配置文件 |
-| --- | --- | --- | --- |
-| `gateway` | Ubuntu 24.04.4 LTS | Go Gateway、Go Backend、SQLite | `deploy/gateway-host.compose.yaml` |
-| `scene` | OpenCloudOS 9.6 | C++ scene-1、scene-2 | `deploy/scene-host.compose.yaml` |
-
-两边使用相同源码，分别在本机构建容器。宿主系统不需要安装 Go 或 C++ 编译器。以下安装说明面向新机器；已有 Docker 或其他容器服务时，先检查现有安装，避免混装或卸载正在使用的软件包。
+以下安装命令用于新机器；已有 Docker 或其他容器服务时，先检查现有安装，避免混装或卸载正在使用的软件包。
 
 ## 1. 检查系统
 
@@ -22,7 +17,7 @@ df -h
 free -h
 ```
 
-记录实际 CPU 架构，例如 `x86_64` 或 `aarch64`。在各机本地构建会使用本机架构；如果以后分发预构建镜像，要选择对应架构。两台系统名称不同不影响 HTTP 通信。
+本次已发布镜像为 `linux/amd64`，目标机应输出 `x86_64`。其他架构需另外构建对应镜像。两台系统名称不同不影响容器之间通信。
 
 安装命令以下使用 `sudo`；已经用 root 登录时可去掉 `sudo`。先检查现有 Docker：
 
@@ -32,7 +27,7 @@ sudo docker compose version
 sudo docker buildx version
 ```
 
-Docker 服务与这两个插件均可用时，直接进入第 3 节。需要支持 `docker compose up --wait`；不要使用旧的 Python 版 `docker-compose` 代替本项目命令。
+Docker 服务与 Compose 插件均可用时，直接进入第 3 节；Buildx 用于构建，VPS 仅拉取运行时无需单独使用它。需要支持 `docker compose up --wait`；不要使用旧的 Python 版 `docker-compose` 代替本项目命令。
 
 ## 2. 安装 Docker
 
@@ -83,9 +78,9 @@ sudo docker compose up --help
 sudo docker run --rm hello-world
 ```
 
-确认 Docker 显示客户端和服务端版本，Compose 帮助包含 `--wait`，测试容器能正常退出。拉镜像失败时先解决出站网络和镜像源问题，再构建本项目。后文使用 `sudo docker`；两机部署文档中的 `docker` 也可同样加 `sudo`。
+确认 Docker 显示客户端和服务端版本，Compose 帮助包含 `--wait`，测试容器能正常退出。拉镜像失败时先解决出站网络和镜像源问题，再部署应用。统一部署流程使用 `sudo docker`。
 
-如果镜像拉取很快，但构建在 `apt-get` 或 `go mod download` 停留很久，参见 [构建慢的排查与换源](BUILD_TROUBLESHOOTING.md)。这几步使用不同的下载来源，需要分别处理。
+VPS 直接拉取应用镜像即可。只有需要自行构建时，才查看 [构建慢的排查与换源](BUILD_TROUBLESHOOTING.md)。
 
 ## 3. 两台都克隆代码
 
@@ -104,81 +99,16 @@ git rev-parse HEAD
 
 源码公开不代表运行配置公开。仓库只带空密钥模板，实际的 `deploy/*.env`、数据库、玩家 token、证书私钥和备份被 `.gitignore` 排除。只在服务器上创建实际 env 文件，不使用 `git add -f` 上传它们。
 
-## 4. 填配置并启动：先 `scene`，后 `gateway`
+## 4. 配置、启动和验收
 
-按 [两机部署文档](DEPLOYMENT_TWO_HOSTS.md) 的第 1–4 节执行，顺序为：
-
-1. 确认 `gateway`、`scene` 的私网或加密 VPN 地址互通。示例 `10.20.0.11`、`10.20.0.22` 必须替换成实际地址。
-2. 运行一次 `openssl rand -hex 32`，把同一个随机密钥填入两台 env 的 `INTERNAL_TOKEN`。
-3. `scene` 创建 `deploy/scene-host.env`，设置自己的 `SCENE_BIND_IP`，启动两个场景。
-4. `gateway` 创建 `deploy/gateway-host.env`，设置指向 `scene` 的 `SCENE_HOST_IP` 和 `gateway` 的 `GATEWAY_BIND_IP`，启动 Backend 与网关。
-5. 从 `gateway` 的网关与 Backend 容器分别检查 `scene` 的两个场景，再用客户端测试移动、切换和奖励。
-
-跨机内部 HTTP 应在私网或加密 VPN 上运行；共享密钥本身不加密流量。公网玩家入口使用 TLS，详见 [TLS 配置](DEPLOYMENT.md#4-网关-tls)。SQLite 模式的数据位于 `gateway` 的持久卷；MySQL 模式连接指定数据库，不需要在 `scene` 安装数据库。
-
-端口安排：`gateway` 的 TCP 7000 给玩家；8080 仅回环健康检查，8081 不发布到宿主机。`scene` 的 TCP 9001/9002 绑定私网/VPN 地址，只允许 `gateway` 的实际出站来源和受控运维来源访问。云安全组与 Docker 转发规则要一起验证；仅配置 UFW/firewalld 不足以证明容器端口已受限，参见 [Docker 防火墙说明](https://docs.docker.com/engine/network/packet-filtering-firewalls/)。
+回到 [统一部署流程的首次部署部分](DEPLOYMENT_TWO_HOSTS.md#fresh)：准备指定 MySQL，填写两份实际 env，先启动 scene，再启动 gateway，然后完成容器互通与客户端业务验收。本页不再重复另一套启动步骤。
 
 ## 5. 以后从 GitHub 更新
 
-本 MVP 使用**维护窗口内整体更新**。场景重建会丢失内存实时状态，需要客户端重新登录；不能把更新流程当作无损滚动升级。
+按 [统一部署流程的更新部分](DEPLOYMENT_TWO_HOSTS.md#updates)操作：更新源码和指定镜像标签，先拉取，再停机备份，按 scene → gateway 顺序恢复。保留原密钥、数据库、证书和卷名；`git pull` 只更新源码与模板，不会替你重建容器。
 
-先在两台机器的仓库根目录分别更新源码；`git status --short` 应为空，若有源码修改，先另行保存并处理，不要执行强制覆盖。实际 `.env` 文件被忽略，会留在本机。
+已运行旧项目名的部署先完成 [配置改名迁移](DEPLOYMENT_NAMING_MIGRATION.md)。
 
-```bash
-git status --short
-git rev-parse HEAD
-git pull --ff-only
-git rev-parse HEAD
-```
+## 6. 验证范围
 
-记下更新前的提交号用于排查，并核对更新后两台提交号相同。如果新版本更改 env 模板，比较新模板并手动补充字段，保留原随机密钥、地址、TLS 设置和 `BACKEND_VOLUME_NAME`。Git 更新不会替你迁移配置或数据库。
-
-**先构建好两边的镜像，再开始停机。** 构建失败时，原容器仍可继续运行。`scene` 上：
-
-```bash
-sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene config --quiet
-sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene build
-```
-
-`gateway` 上：
-
-```bash
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway config --quiet
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway build
-```
-
-两边构建成功后，先在 **`gateway`** 停入口和业务：
-
-```bash
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway stop gateway
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway stop backend
-```
-
-再在 **`scene`** 停场景：
-
-```bash
-sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene stop
-```
-
-此时按 [两机备份说明](DEPLOYMENT_TWO_HOSTS.md#5-停止数据与已有部署迁移) 备份 `gateway` 的完整数据库卷。然后先启动 **`scene`**，确认健康：
-
-```bash
-sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene up -d --no-build --wait
-sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml -p mmo-scene ps
-```
-
-最后启动 **`gateway`**：
-
-```bash
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway up -d --no-build --wait
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml -p mmo-gateway ps
-curl --fail http://127.0.0.1:8080/readyz
-```
-
-按两机文档重新做容器间连通检查和客户端重登验收。整个过程保留命名卷，**不要执行 `down -v`**。若升级包含数据库格式变化，旧代码不一定能直接读取新数据库；恢复需同时考虑对应源码版本、配置和停机备份，不要只回退 Git 提交。
-
-## 6. 当前已验证与待验证
-
-本机已通过 Windows 原生构建、Go 测试与静态检查、C++ CTest 2/2 和四进程端到端测试 15/15；Go 程序完成 Linux amd64 交叉编译，七组 Compose 配置展开通过。详情见 [验证记录](VALIDATION.md)。
-
-当前没有登录两台 VPS 执行安装与部署，本机也没有可用的 Docker daemon。上面的系统安装命令依据官方资料整理；OpenCloudOS 包名已核对官方 EPOL9 目录，但尚未在你的 VPS 安装。Docker 镜像构建、C++ Linux 编译、容器启动及两机网络仍需按文档在目标机器验收。
+本机已完成 Windows 原生、Linux Docker、SQLite / MySQL 业务测试和四个 GHCR 镜像的匿名拉取，详见 [验证记录](VALIDATION.md)。系统安装命令按官方资料整理，真实 VPS 的安装、私网路由、账号权限、证书与容量仍需目标环境验收。

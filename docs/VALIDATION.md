@@ -4,6 +4,8 @@
 
 部署角色命名统一为 `gateway` / `scene`：两个主机模板分别在本地、GHCR、自定义镜像前缀以及 SQLite / MySQL 模式下展开，共 12 组通过；使用相同项目名对比改名前后的服务配置完全一致，数据库卷名保持原值。另以随机项目和独立测试卷运行实际 Docker 项目改名检查，旧项目停止后，新项目继续挂载原命名卷并读取到原有数据。仅清理该测试项目及其测试卷；报告位于 `output/role-config-check-*/report.json`、`output/project-rename-check-*/report.json`。镜像包采用 `mmo-gateway.tar.gz`、`mmo-scene.tar.gz`；历史归档仅调整交付文件名，镜像内容和 SHA-256 保持一致。
 
+2026-11-05 部署文档整合另完成静态验收：README、架构文档和 docs 中的 71 处相对文件/锚点链接通过；本次修改文档里的 73 段 shell 命令仅做语法检查，未执行安装、停机或建库操作。主指南的 scene、gateway 完整 env，以及自定义 MySQL 地址/端口变体，共 3 组 Compose 展开通过，核对镜像标签、私网绑定、健康依赖、数据库卷名和密码只进入 Backend。没有启动服务，也没有连接真实 VPS/MySQL；应用与部署模板未改动，继续使用现有已发布镜像。报告位于 `output/deploy-doc-check-d2230b22/report.json`。
+
 | 检查 | 结果 | 范围 |
 | --- | --- | --- |
 | `scripts/build.ps1` | 通过 | Windows 本机生成 Backend、Gateway、CLI 和 C++ SceneHost |

@@ -1,5 +1,7 @@
 # Linux Docker 部署
 
+本页补充各服务独立部署、TLS 和 SQLite 备份。两台 VPS 的 GHCR + 指定 MySQL 部署，以 [统一部署流程](DEPLOYMENT_TWO_HOSTS.md)为入口。
+
 本目录提供单机演示和各角色独立部署。所有应用镜像默认使用非 root 的 UID/GID `10001:10001` 运行；Backend 是唯一数据库写入者。默认 SQLite 数据目录必须挂载持久卷，也可按 [MySQL 配置](MYSQL.md) 连接指定的 MySQL；两种模式都只运行一个 Backend。下文 SQLite 卷备份步骤仅适用于 SQLite 模式。
 
 **只有两台主机时，请优先使用 [两机部署步骤](DEPLOYMENT_TWO_HOSTS.md)**：`gateway` 运行网关与 Backend，`scene` 运行两个场景。下文按角色分别说明，四个角色不要求四台物理主机。
