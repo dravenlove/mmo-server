@@ -10,7 +10,7 @@ using System.Text.Json;
 using Mmo.Client.Core;
 
 // 这些检查只连接脚本新建的回环 fixture，不读取用户实际部署配置。
-internal static class Program
+internal static partial class Program
 {
     private static readonly List<string> Passed = [];
     private static readonly List<string> Secrets = [];
@@ -29,6 +29,7 @@ internal static class Program
         var errors = new List<string>();
         try
         {
+            CheckWorldPresentation();
             await CheckRealServer(address, directory);
             await CheckPendingDisconnect();
             await CheckRemoteDisconnect();

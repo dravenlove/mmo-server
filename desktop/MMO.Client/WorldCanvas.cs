@@ -1,8 +1,9 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Threading;
 using Mmo.Client.Core;
 
 namespace Mmo.Client.Desktop;
@@ -11,7 +12,18 @@ public sealed class WorldCanvas : FrameworkElement
 {
     private sealed record CombatVisualItem(CombatEvent Event, DateTime Born);
     private readonly List<CombatVisualItem> _effects = [];
-    private readonly DispatcherTimer _animation = new() { Interval = TimeSpan.FromMilliseconds(50) };
+    private readonly WorldPresentation _presentation = new();
+    private static readonly ConcurrentDictionary<string, SolidColorBrush> BrushesByColor = new();
+    private static readonly Typeface WorldTypeface = new("Microsoft YaHei UI");
+    private readonly Dictionary<(string Text, string Color, double Size, double Dpi), FormattedText> _textCache = [];
+    private bool _renderingSubscribed;
+    private double _renderAt, _pixelsPerDip = 1;
+    private double _frameWindowAt, _snapshotWindowAt;
+    private int _frameCount, _snapshotCount;
+    private TimeSpan _lastRenderingTime = TimeSpan.MinValue;
+    public double DrawFramesPerSecond { get; private set; }
+    public double SnapshotUpdatesPerSecond { get; private set; }
+    public WorldPosition DisplayedSelf { get; private set; }
     private WorldView? _view;
     private long _eventCursor;
     private string _eventScene = "";
@@ -27,20 +39,49 @@ public sealed class WorldCanvas : FrameworkElement
     {
         ClipToBounds = true;
         Cursor = Cursors.Cross;
-        _animation.Tick += (_, _) =>
+        Loaded += (_, _) =>
         {
-            _effects.RemoveAll(effect => (DateTime.UtcNow - effect.Born).TotalSeconds > 1.2);
-            if (_view is not null || _effects.Count > 0) InvalidateVisual();
+            if (_renderingSubscribed) return;
+            CompositionTarget.Rendering += Animate;
+            _renderingSubscribed = true;
         };
-        Loaded += (_, _) => _animation.Start();
-        Unloaded += (_, _) => _animation.Stop();
+        Unloaded += (_, _) =>
+        {
+            CompositionTarget.Rendering -= Animate;
+            _renderingSubscribed = false;
+        };
+    }
+
+    private static double Clock => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+
+    private void Animate(object? sender, EventArgs args)
+    {
+        if (!IsVisible) return;
+        if (args is RenderingEventArgs rendering)
+        {
+            if (rendering.RenderingTime == _lastRenderingTime) return;
+            _lastRenderingTime = rendering.RenderingTime;
+        }
+        _effects.RemoveAll(effect => (DateTime.UtcNow - effect.Born).TotalSeconds > 1.2);
+        if (_view is null && _effects.Count == 0) return;
+        double now = Clock;
+        if (_frameWindowAt == 0) _frameWindowAt = now;
+        ++_frameCount;
+        if (now - _frameWindowAt >= 1)
+        {
+            DrawFramesPerSecond = _frameCount / (now - _frameWindowAt);
+            _frameCount = 0; _frameWindowAt = now;
+        }
+        InvalidateVisual();
     }
 
     public void Update(WorldView? view)
     {
         if (view is null)
         {
-            _view = null; _effects.Clear(); _haveEventBaseline = false; _eventCursor = 0;
+            _view = null; _effects.Clear(); _haveEventBaseline = false; _eventCursor = 0; _presentation.Clear();
+            _frameCount = _snapshotCount = 0; _frameWindowAt = _snapshotWindowAt = Clock;
+            DrawFramesPerSecond = SnapshotUpdatesPerSecond = 0;
             SelectTarget(null); InvalidateVisual(); return;
         }
         bool changedScene = _eventScene != view.SceneId || view.Tick < _previousTick;
@@ -56,6 +97,15 @@ public sealed class WorldCanvas : FrameworkElement
                 double length = Math.Sqrt(dx * dx + dy * dy);
                 _facingX = dx / length; _facingY = dy / length;
             }
+        }
+        var now = Clock;
+        _presentation.Update(view, now);
+        if (_snapshotWindowAt == 0) _snapshotWindowAt = now;
+        ++_snapshotCount;
+        if (now - _snapshotWindowAt >= 1)
+        {
+            SnapshotUpdatesPerSecond = _snapshotCount / (now - _snapshotWindowAt);
+            _snapshotCount = 0; _snapshotWindowAt = now;
         }
         _view = view; _eventScene = view.SceneId; _previousTick = view.Tick;
         var events = view.Events ?? [];
@@ -100,7 +150,7 @@ public sealed class WorldCanvas : FrameworkElement
         base.OnMouseDown(e); Focus();
         if (e.ChangedButton != MouseButton.Left || _view is null) return;
         var click = e.GetPosition(this);
-        var candidate = (_view.Mobs ?? []).Select(mob => (Mob: mob, Point: Map(mob.X, mob.Y)))
+        var candidate = (_view.Mobs ?? []).Select(mob => (Mob: mob, Point: Map(_presentation.Monster(mob, Clock))))
             .OrderBy(item => (item.Point - click).LengthSquared).FirstOrDefault();
         SelectTarget(candidate.Mob is not null && (candidate.Point - click).Length <= 26 ? candidate.Mob.Id : null);
     }
@@ -111,8 +161,10 @@ public sealed class WorldCanvas : FrameworkElement
         var bounds = new Rect(0, 0, ActualWidth, ActualHeight);
         dc.DrawRoundedRectangle(Brush("#0B1523"), null, bounds, 8, 8);
         if (ActualWidth < 60 || ActualHeight < 60) return;
-        _cameraX = Math.Clamp(_view?.Self.X ?? 0, -65, 65);
-        _cameraY = Math.Clamp(_view?.Self.Y ?? 0, -65, 65);
+        _renderAt = Clock; _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        DisplayedSelf = _view is null ? new(0, 0) : _presentation.Player(_view.Self, _renderAt);
+        _cameraX = Math.Clamp(DisplayedSelf.X, -65, 65);
+        _cameraY = Math.Clamp(DisplayedSelf.Y, -65, 65);
         _scale = Math.Min((ActualWidth - 34) / 72, (ActualHeight - 34) / 58);
         var grid = new Pen(Brush("#172B3B"), 1);
         for (int n = -100; n <= 100; n += 5)
@@ -124,6 +176,8 @@ public sealed class WorldCanvas : FrameworkElement
         DrawArenaDecoration(dc);
         Text(dc, _view is null ? "战斗试炼场" : _view.SceneId == "scene-1" ? "第一试炼 · 狼群营地" : "第二试炼 · 守卫前哨", new Point(16, 12), "#8EACB6", 13);
         Text(dc, "世界范围 -100 ～ 100  /  服务器权威判定", new Point(16, ActualHeight - 24), "#5D7D8F", 10);
+        if (_view is not null) Text(dc, $"画面 {DrawFramesPerSecond:0} fps · 状态 {SnapshotUpdatesPerSecond:0.#} Hz",
+            new Point(Math.Max(16, ActualWidth - 210), ActualHeight - 24), "#8EACB6", 10);
         if (_view is null)
         {
             Text(dc, "连接角色，开始试炼", new Point(Math.Max(20, ActualWidth / 2 - 88), ActualHeight / 2 - 12), "#97ADBF", 17);
@@ -134,14 +188,14 @@ public sealed class WorldCanvas : FrameworkElement
         if (selected is not null)
         {
             var line = new Pen(Brush("#7B6D46"), 1) { DashStyle = DashStyles.Dash };
-            dc.DrawLine(line, Map(self.X, self.Y), Map(selected.X, selected.Y));
-            dc.DrawEllipse(null, new Pen(Brush("#314D5E"), 1), Map(self.X, self.Y), 3.2 * _scale, 3.2 * _scale);
+            dc.DrawLine(line, Map(DisplayedSelf), Map(_presentation.Monster(selected, _renderAt)));
+            dc.DrawEllipse(null, new Pen(Brush("#314D5E"), 1), Map(DisplayedSelf), 3.2 * _scale, 3.2 * _scale);
         }
         foreach (var mob in (_view.Mobs ?? []).OrderByDescending(mob => mob.Y)) DrawMob(dc, mob);
         int labelIndex = 0;
         foreach (var role in _view.Players.Where(role => role.RoleId != self.RoleId))
-            DrawPlayer(dc, role, Map(role.X, role.Y), false, 12 + (labelIndex++ % 3) * 16);
-        DrawPlayer(dc, self, Map(self.X, self.Y), true);
+            DrawPlayer(dc, role, Map(_presentation.Player(role, _renderAt)), false, 12 + (labelIndex++ % 3) * 16);
+        DrawPlayer(dc, self, Map(DisplayedSelf), true);
         foreach (var effect in _effects) DrawEffect(dc, effect);
         if (self.Combat?.Dead == true)
         {
@@ -152,8 +206,13 @@ public sealed class WorldCanvas : FrameworkElement
     }
 
     private Point Map(double x, double y) => new(ActualWidth / 2 + (x - _cameraX) * _scale, ActualHeight / 2 - (y - _cameraY) * _scale);
+    private Point Map(WorldPosition position) => Map(position.X, position.Y);
     private static double DistanceSquared(double x, double y, double a, double b) => (x - a) * (x - a) + (y - b) * (y - b);
-    private static SolidColorBrush Brush(string color) => new((Color)ColorConverter.ConvertFromString(color));
+    private static SolidColorBrush Brush(string color) => BrushesByColor.GetOrAdd(color, value =>
+    {
+        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(value));
+        brush.Freeze(); return brush;
+    });
 
     private void DrawArenaDecoration(DrawingContext dc)
     {
@@ -172,7 +231,7 @@ public sealed class WorldCanvas : FrameworkElement
 
     private void DrawMob(DrawingContext dc, Mob mob)
     {
-        Point p = Map(mob.X, mob.Y);
+        Point p = Map(_presentation.Monster(mob, _renderAt));
         bool selected = mob.Id == SelectedTargetId;
         if (!mob.Alive)
         {
@@ -281,8 +340,15 @@ public sealed class WorldCanvas : FrameworkElement
 
     private void Text(DrawingContext dc, string text, Point point, string color, double size)
     {
-        var formatted = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-            new Typeface("Microsoft YaHei UI"), size, Brush(color), VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        var key = (text, color, size, _pixelsPerDip);
+        if (!_textCache.TryGetValue(key, out var formatted))
+        {
+            // 玩家名字与静态说明反复出现；限制缓存，避免飘字和数值无限积累。
+            if (_textCache.Count >= 512) _textCache.Clear();
+            formatted = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                WorldTypeface, size, Brush(color), _pixelsPerDip);
+            _textCache.Add(key, formatted);
+        }
         dc.DrawText(formatted, point);
     }
 }

@@ -22,11 +22,12 @@ public partial class MainWindow : Window
     private readonly HashSet<Key> _keys = [];
     private GameConnection? _connection;
     private Role? _role;
-    private bool _busy, _loggedIn, _motionSending, _pingSending, _closing, _probeSucceeded;
+    private bool _busy, _loggedIn, _motionSending, _motionDirty, _pingSending, _closing, _probeSucceeded;
     private double _buttonX, _buttonY;
     private bool _lastMoving;
     private string? _pendingTransferId, _pendingTarget;
     private readonly string? _screenshotPath, _uiCheckPath, _probeReportPath, _waitConfigVersion;
+    private object? _movementRenderingReport;
 
     public MainWindow(string[] args)
     {
@@ -300,7 +301,15 @@ public partial class MainWindow : Window
 
     private void StopMotion()
     {
+        bool changed = _keys.Count > 0 || _buttonX != 0 || _buttonY != 0;
         _keys.Clear(); _buttonX = _buttonY = 0;
+        if (changed) MotionChanged();
+    }
+
+    private void MotionChanged()
+    {
+        _motionDirty = true;
+        _ = SendMotionAsync();
     }
 
     private void ClearLiveState()
@@ -316,21 +325,27 @@ public partial class MainWindow : Window
     {
         var conn = _connection;
         if (_motionSending || conn?.IsConnected != true || !_loggedIn || _role?.Combat?.Dead == true) return;
-        double x = _buttonX, y = _buttonY;
-        if (_keys.Contains(Key.A) || _keys.Contains(Key.Left)) x -= 1;
-        if (_keys.Contains(Key.D) || _keys.Contains(Key.Right)) x += 1;
-        if (_keys.Contains(Key.W) || _keys.Contains(Key.Up)) y += 1;
-        if (_keys.Contains(Key.S) || _keys.Contains(Key.Down)) y -= 1;
-        x = Math.Clamp(x, -1, 1); y = Math.Clamp(y, -1, 1);
-        if (_busy) x = y = 0;
-        bool moving = x != 0 || y != 0;
-        if (!moving && !_lastMoving) return;
-        _lastMoving = moving; _motionSending = true;
+        _motionSending = true;
         try
         {
-            await conn.RequestAsync("move", new Dictionary<string, object?> { ["seq"] = conn.NextMoveSequence(), ["dx"] = x, ["dy"] = y });
+            do
+            {
+                _motionDirty = false;
+                double x = _buttonX, y = _buttonY;
+                if (_keys.Contains(Key.A) || _keys.Contains(Key.Left)) x -= 1;
+                if (_keys.Contains(Key.D) || _keys.Contains(Key.Right)) x += 1;
+                if (_keys.Contains(Key.W) || _keys.Contains(Key.Up)) y += 1;
+                if (_keys.Contains(Key.S) || _keys.Contains(Key.Down)) y -= 1;
+                x = Math.Clamp(x, -1, 1); y = Math.Clamp(y, -1, 1);
+                if (_busy) x = y = 0;
+                bool moving = x != 0 || y != 0;
+                if (!moving && !_lastMoving) break;
+                _lastMoving = moving;
+                await conn.RequestAsync("move", new Dictionary<string, object?> { ["seq"] = conn.NextMoveSequence(), ["dx"] = x, ["dy"] = y });
+                // 等待回执时发生的松键/转向合并为最新输入，不再额外等待下个100ms定时器。
+            } while (_motionDirty && ReferenceEquals(conn, _connection) && conn.IsConnected && _loggedIn);
         }
-        catch (Exception ex) { StopMotion(); _lastMoving = false; Log("移动失败：" + Explain(ex)); }
+        catch (Exception ex) { StopMotion(); _lastMoving = _motionDirty = false; Log("移动失败：" + Explain(ex)); }
         finally { _motionSending = false; }
     }
 
@@ -355,6 +370,7 @@ public partial class MainWindow : Window
         var button = (Button)sender;
         var direction = ((string)button.Tag).Split(',');
         _buttonX = double.Parse(direction[0]); _buttonY = double.Parse(direction[1]);
+        MotionChanged();
         button.CaptureMouse(); e.Handled = true;
     }
     private void Move_Up(object sender, MouseButtonEventArgs e) { StopMotion(); ((Button)sender).ReleaseMouseCapture(); e.Handled = true; }
@@ -368,9 +384,9 @@ public partial class MainWindow : Window
         string? skill = e.Key switch { Key.D1 or Key.NumPad1 => "strike", Key.D2 or Key.NumPad2 => "whirlwind", Key.D3 or Key.NumPad3 => "charge", Key.D4 or Key.NumPad4 => "mend", _ => null };
         if (skill is not null) { if (!e.IsRepeat) _ = CastSkillAsync(skill); e.Handled = true; return; }
         if (_role?.Combat?.Dead == true) return;
-        if (MovementKey(e.Key)) { _keys.Add(e.Key); e.Handled = true; }
+        if (MovementKey(e.Key)) { if (_keys.Add(e.Key)) MotionChanged(); e.Handled = true; }
     }
-    private void Window_KeyUp(object sender, KeyEventArgs e) { if (MovementKey(e.Key)) { _keys.Remove(e.Key); e.Handled = true; } }
+    private void Window_KeyUp(object sender, KeyEventArgs e) { if (MovementKey(e.Key)) { if (_keys.Remove(e.Key)) MotionChanged(); e.Handled = true; } }
     private void Window_Deactivated(object? sender, EventArgs e) => StopMotion();
 
     private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -426,6 +442,7 @@ public partial class MainWindow : Window
             if (_role!.RoleId != id || _role.SceneId != "scene-2" || _role.Coins != 100) throw new InvalidOperationException("界面重连身份或状态不匹配。");
             results.Add("原凭据重连及身份、金币和场景保持");
             await CheckCombatUiAsync(results);
+            await CheckMovementRenderingUiAsync(results);
             if (!string.IsNullOrWhiteSpace(_waitConfigVersion)) await CheckLiveConfigUiAsync(path, _waitConfigVersion, results);
             _busy = false; UpdateControls();
             await Task.Delay(350); Capture(Path.ChangeExtension(path, ".png"));
@@ -436,6 +453,7 @@ public partial class MainWindow : Window
                 config_version = _combatView?.ConfigVersion ?? "",
                 config_generation = _combatView?.ConfigGeneration ?? 0,
                 config_applied_tick = _combatView?.ConfigAppliedTick ?? 0,
+                movement_rendering = _movementRenderingReport,
                 credentials_not_logged = true
             }, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -447,6 +465,42 @@ public partial class MainWindow : Window
             Capture(Path.ChangeExtension(path, ".failed.png"));
         }
         finally { Close(); }
+    }
+
+    private async Task CheckMovementRenderingUiAsync(List<string> results)
+    {
+        if (_role is null || _connection?.IsConnected != true) throw new InvalidOperationException("移动画面检查缺少连接。");
+        _busy = false; UpdateControls();
+        var roleId = _role.RoleId; long session = _role.SessionEpoch;
+        double previousAuthoritative = _role.X, previousDisplay = World.DisplayedSelf.X, maxDisplayStep = 0;
+        int authoritativeChanges = 0, displayChanges = 0, samples = 0;
+        var timer = Stopwatch.StartNew();
+        _buttonX = 1; MotionChanged();
+        try
+        {
+            while (timer.ElapsedMilliseconds < 1600)
+            {
+                await Task.Delay(16);
+                if (_role?.RoleId != roleId || _role.SessionEpoch != session || _connection?.IsConnected != true)
+                    throw new InvalidOperationException("移动画面检查期间连接发生变化。");
+                double authoritative = _role.X, displayed = World.DisplayedSelf.X;
+                if (Math.Abs(authoritative - previousAuthoritative) > 1e-5) ++authoritativeChanges;
+                if (Math.Abs(displayed - previousDisplay) > 1e-5) ++displayChanges;
+                maxDisplayStep = Math.Max(maxDisplayStep, Math.Abs(displayed - previousDisplay));
+                previousAuthoritative = authoritative; previousDisplay = displayed; ++samples;
+            }
+        }
+        finally { StopMotion(); }
+        _movementRenderingReport = new
+        {
+            elapsed_ms = timer.ElapsedMilliseconds, samples, authoritative_changes = authoritativeChanges,
+            rendered_changes = displayChanges, maximum_sample_step = maxDisplayStep,
+            draw_fps = World.DrawFramesPerSecond, snapshot_hz = World.SnapshotUpdatesPerSecond
+        };
+        if (authoritativeChanges < 3 || displayChanges <= authoritativeChanges * 2)
+            throw new InvalidOperationException($"移动画面未形成连续显示：权威变化 {authoritativeChanges}，画面变化 {displayChanges}。");
+        await Task.Delay(300); await RefreshAsync();
+        results.Add("低频权威坐标经逐帧插值连续显示，玩家输入及会话保持正常");
     }
 
     private async Task RunProbeCheckAsync(string path)
