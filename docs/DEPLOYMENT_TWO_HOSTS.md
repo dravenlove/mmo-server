@@ -78,7 +78,7 @@ GRANT SELECT, INSERT, UPDATE, CREATE, INDEX, REFERENCES
   ON mmo_game.* TO 'mmo_app'@'10.20.0.11';
 ```
 
-授权来源应为 MySQL 实际看到的 gateway 出口地址。Backend 首次启动会在指定库中创建三张业务表，不会创建数据库或账号。MySQL 参数只配置在 gateway 主机，scene 不需要数据库密码。
+授权来源应为 MySQL 实际看到的 gateway 出口地址。Backend 首次启动会在指定库中创建四张业务表，不会创建数据库或账号；战斗版新增 `combat_snapshots` 表，已有账号需保留建表权限。MySQL 参数只配置在 gateway 主机，scene 不需要数据库密码。
 
 网络需满足：
 

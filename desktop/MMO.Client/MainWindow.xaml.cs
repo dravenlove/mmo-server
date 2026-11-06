@@ -41,6 +41,7 @@ public partial class MainWindow : Window
         _uiCheckPath = Arg("--ui-check-report");
         _probeReportPath = Arg("--probe-report");
         InitializeComponent();
+        InitializeCombat();
         var settings = ClientSettings.Load(_dataDirectory);
         AddressBox.Text = Arg("--address") ?? settings.Address;
         ProfileBox.Text = Arg("--profile") ?? settings.ProfileName;
@@ -111,6 +112,7 @@ public partial class MainWindow : Window
         bool active = connected && _loggedIn && !_busy;
         foreach (var button in new[] { ClaimButton, RefreshButton, TransferButton, UpButton, DownButton, LeftButton, RightButton }) button.IsEnabled = active;
         TargetSceneBox.IsEnabled = active && _pendingTransferId is null;
+        UpdateCombatHud();
         if (_loggedIn && connected)
         {
             StatusLabel.Text = "●  已登录";
@@ -209,6 +211,7 @@ public partial class MainWindow : Window
             await conn.RequestAsync("ping");
             LatencyLabel.Text = latency.ElapsedMilliseconds + " ms";
             Log("登录成功。点击场景后可使用 WASD 或方向键移动。");
+            UpdateControls();
             World.Focus();
         }
         catch
@@ -216,23 +219,28 @@ public partial class MainWindow : Window
             _loggedIn = false;
             if (ReferenceEquals(_connection, conn)) _connection = null;
             await conn.DisposeAsync();
+            UpdateControls();
             throw;
         }
     }
 
     private void ApplyRole(Role role)
     {
+        role = MergeCombatSnapshot(role);
         _role = role;
         RoleNameLabel.Text = role.Name;
         SceneLabel.Text = "场景  " + role.SceneId;
         PositionLabel.Text = $"坐标  {role.X:0.00}, {role.Y:0.00}";
-        CoinsLabel.Text = role.Coins.ToString();
+        CoinsLabel.Text = "金币  " + role.Coins;
+        UpdateCombatHud();
     }
 
     private void ApplyView(WorldView view)
     {
         ApplyRole(view.Self);
-        World.Update(view);
+        _combatView = view with { Self = _role! };
+        World.Update(_combatView);
+        UpdateTargetHud();
         TickLabel.Text = $"{view.SceneId}  ·  Tick {view.Tick}  ·  可见 {view.Players.Count} 人";
     }
 
@@ -296,6 +304,7 @@ public partial class MainWindow : Window
     private void ClearLiveState()
     {
         _role = null; World.Update(null);
+        ClearCombat();
         RoleNameLabel.Text = "尚未登录"; SceneLabel.Text = "场景  —";
         PositionLabel.Text = "坐标  —"; CoinsLabel.Text = LatencyLabel.Text = "—";
         TickLabel.Text = "等待服务器状态";
@@ -304,7 +313,7 @@ public partial class MainWindow : Window
     private async Task SendMotionAsync()
     {
         var conn = _connection;
-        if (_motionSending || conn?.IsConnected != true || !_loggedIn) return;
+        if (_motionSending || conn?.IsConnected != true || !_loggedIn || _role?.Combat?.Dead == true) return;
         double x = _buttonX, y = _buttonY;
         if (_keys.Contains(Key.A) || _keys.Contains(Key.Left)) x -= 1;
         if (_keys.Contains(Key.D) || _keys.Contains(Key.Right)) x += 1;
@@ -353,6 +362,10 @@ public partial class MainWindow : Window
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
         if (!_loggedIn || _busy || !World.IsKeyboardFocusWithin) return;
+        if (e.Key == Key.Tab) { World.CycleTarget(); e.Handled = true; return; }
+        string? skill = e.Key switch { Key.D1 or Key.NumPad1 => "strike", Key.D2 or Key.NumPad2 => "whirlwind", Key.D3 or Key.NumPad3 => "charge", Key.D4 or Key.NumPad4 => "mend", _ => null };
+        if (skill is not null) { if (!e.IsRepeat) _ = CastSkillAsync(skill); e.Handled = true; return; }
+        if (_role?.Combat?.Dead == true) return;
         if (MovementKey(e.Key)) { _keys.Add(e.Key); e.Handled = true; }
     }
     private void Window_KeyUp(object sender, KeyEventArgs e) { if (MovementKey(e.Key)) { _keys.Remove(e.Key); e.Handled = true; } }
@@ -361,6 +374,7 @@ public partial class MainWindow : Window
     private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         _closing = true; _motionTimer.Stop(); _pingTimer.Stop(); StopMotion();
+        _combatTimer.Stop();
         try { SaveSettings(); } catch { }
         var conn = _connection; _connection = null;
         if (conn is not null) _ = conn.DisposeAsync();
@@ -409,9 +423,10 @@ public partial class MainWindow : Window
             await DisconnectAsync(); await ConnectAndLoginAsync();
             if (_role!.RoleId != id || _role.SceneId != "scene-2" || _role.Coins != 100) throw new InvalidOperationException("界面重连身份或状态不匹配。");
             results.Add("原凭据重连及身份、金币和场景保持");
+            await CheckCombatUiAsync(results);
             _busy = false; UpdateControls();
             await Task.Delay(350); Capture(Path.ChangeExtension(path, ".png"));
-            File.WriteAllText(path, JsonSerializer.Serialize(new { ok = true, checks = results, credentials_not_logged = true }, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(path, JsonSerializer.Serialize(new { ok = true, checks = results, combat_supported = _role?.Combat is not null && (_combatView?.Skills?.Count ?? 0) > 0, credentials_not_logged = true }, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)
         {

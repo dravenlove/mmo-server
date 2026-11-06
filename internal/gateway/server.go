@@ -21,24 +21,30 @@ import (
 )
 
 type Role struct {
-	ID      string  `json:"role_id"`
-	Name    string  `json:"name"`
-	Scene   string  `json:"scene_id"`
-	Owner   int64   `json:"owner_epoch"`
-	Session int64   `json:"session_epoch"`
-	X       float64 `json:"x"`
-	Y       float64 `json:"y"`
-	Coins   int64   `json:"coins"`
+	ID      string          `json:"role_id"`
+	Name    string          `json:"name"`
+	Scene   string          `json:"scene_id"`
+	Owner   int64           `json:"owner_epoch"`
+	Session int64           `json:"session_epoch"`
+	X       float64         `json:"x"`
+	Y       float64         `json:"y"`
+	Coins   int64           `json:"coins"`
+	Combat  json.RawMessage `json:"combat,omitempty"`
 }
 type Route struct {
 	Role Role   `json:"role"`
 	URL  string `json:"scene_url"`
 }
 type View struct {
-	Self    Role   `json:"self"`
-	Players []Role `json:"players"`
-	Tick    uint64 `json:"tick"`
-	Scene   string `json:"scene_id"`
+	Self               Role            `json:"self"`
+	Players            []Role          `json:"players"`
+	Tick               uint64          `json:"tick"`
+	Scene              string          `json:"scene_id"`
+	Mobs               json.RawMessage `json:"mobs,omitempty"`
+	Skills             json.RawMessage `json:"skills,omitempty"`
+	Events             json.RawMessage `json:"events,omitempty"`
+	PlayersTruncated   bool            `json:"players_truncated,omitempty"`
+	VisiblePlayerCount int             `json:"visible_player_count,omitempty"`
 }
 type Request struct {
 	ID        string  `json:"id"`
@@ -50,6 +56,8 @@ type Request struct {
 	DY        float64 `json:"dy,omitempty"`
 	Target    string  `json:"target_scene_id,omitempty"`
 	RequestID string  `json:"request_id,omitempty"`
+	SkillID   string  `json:"skill_id,omitempty"`
+	TargetID  string  `json:"target_id,omitempty"`
 }
 type Response struct {
 	ID    string `json:"id,omitempty"`
@@ -239,6 +247,38 @@ func overlayBalance(v *View, role Role) {
 		}
 	}
 }
+
+// 成功动作的回执比轮询视图更新；立即断开时也要保存该回执中的权威快照。
+// Scene 不管理业务金币，因此先覆盖为 Backend 路由中的余额再交给客户端。
+func actionSnapshot(data map[string]json.RawMessage, route Route, previous *View) (*View, bool) {
+	var role Role
+	if err := json.Unmarshal(data["role"], &role); err != nil || role.ID != route.Role.ID ||
+		role.Owner != route.Role.Owner || role.Session != route.Role.Session || role.Scene != route.Role.Scene {
+		return previous, false
+	}
+	role.Coins = route.Role.Coins
+	data["role"], _ = json.Marshal(role)
+	view := &View{Self: role, Scene: role.Scene}
+	if previous != nil && previous.Self.ID == role.ID && previous.Self.Owner == role.Owner && previous.Self.Session == role.Session && previous.Self.Scene == role.Scene {
+		var before, after struct {
+			Revision int64 `json:"revision"`
+		}
+		if json.Unmarshal(previous.Self.Combat, &before) == nil && json.Unmarshal(role.Combat, &after) == nil && before.Revision > after.Revision {
+			// 幂等重试可返回历史结算回执，不能覆盖此后已经观察到的战斗状态。
+			return previous, true
+		}
+		copy := *previous
+		view = &copy
+		view.Self = role
+		view.Players = append([]Role(nil), previous.Players...)
+		for i := range view.Players {
+			if view.Players[i].ID == role.ID {
+				view.Players[i] = role
+			}
+		}
+	}
+	return view, true
+}
 func (s *Server) sceneCall(ctx context.Context, r Route, path string, in, out any) error {
 	c, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -306,7 +346,10 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 	}()
 	write := func(r Response) bool {
 		c.SetWriteDeadline(time.Now().Add(3 * time.Second))
-		return json.NewEncoder(c).Encode(r) == nil
+		encoder := json.NewEncoder(c)
+		// TCP JSON 不嵌入 HTML，避免角色名中的 <>& 在转发时无谓放大消息。
+		encoder.SetEscapeHTML(false)
+		return encoder.Encode(r) == nil
 	}
 	var route *Route
 	var lastView *View
@@ -365,6 +408,30 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					p["dy"] = req.DY
 					var out any
 					err = s.sceneCall(ctx, *route, "/v1/move", p, &out)
+					resp.Data = out
+				case "cast", "revive":
+					if req.Seq <= 0 {
+						err = errors.New("positive action seq is required")
+						break
+					}
+					p := ref(route.Role)
+					p["seq"] = req.Seq
+					if req.Op == "cast" {
+						if len(req.SkillID) == 0 || len(req.SkillID) > 32 || len(req.TargetID) > 128 {
+							err = errors.New("invalid skill or target")
+							break
+						}
+						p["skill_id"], p["target_id"] = req.SkillID, req.TargetID
+					}
+					var out map[string]json.RawMessage
+					err = s.sceneCall(ctx, *route, "/v1/"+req.Op, p, &out)
+					if err == nil {
+						if snapshot, valid := actionSnapshot(out, *route, lastView); valid {
+							lastView = snapshot
+							// 持久化失败只记录日志，不能把已成功的结算伪装成未执行。
+							s.checkpoint(ctx, *route, lastView)
+						}
+					}
 					resp.Data = out
 				case "view":
 					var v View

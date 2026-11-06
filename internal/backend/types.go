@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,14 +11,15 @@ import (
 
 // Role 的资产字段只能由 Backend 的数据库事务修改。
 type Role struct {
-	RoleID       string  `json:"role_id"`
-	Name         string  `json:"name"`
-	SceneID      string  `json:"scene_id"`
-	OwnerEpoch   int64   `json:"owner_epoch"`
-	SessionEpoch int64   `json:"session_epoch"`
-	X            float64 `json:"x"`
-	Y            float64 `json:"y"`
-	Coins        int64   `json:"coins"`
+	RoleID       string          `json:"role_id"`
+	Name         string          `json:"name"`
+	SceneID      string          `json:"scene_id"`
+	OwnerEpoch   int64           `json:"owner_epoch"`
+	SessionEpoch int64           `json:"session_epoch"`
+	X            float64         `json:"x"`
+	Y            float64         `json:"y"`
+	Coins        int64           `json:"coins"`
+	Combat       json.RawMessage `json:"combat,omitempty"`
 }
 
 type Ref struct {

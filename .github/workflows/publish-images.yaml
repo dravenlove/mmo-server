@@ -44,13 +44,13 @@ jobs:
         run: python3 scripts/package_images.py --tag "$IMAGE_TAG" --platform linux/amd64
 
       - name: Verify containers and persistent volumes
-        run: python3 scripts/smoke_docker.py --tag "$IMAGE_TAG"
+        run: python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --combat
 
       - name: Verify MySQL integration and recovery
         run: |
           docker pull mysql:8.0
           python3 scripts/test_mysql.py
-          python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql
+          python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql --combat
 
       - name: Sign in to GitHub Container Registry
         env:

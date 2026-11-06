@@ -4,7 +4,7 @@
 
 公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。
 
-**Windows 测试已部署的服务器，优先使用 [桌面客户端](docs/DESKTOP_CLIENT.md)。** 构建后双击 `dist/desktop/MMO.Client.exe`，填写 gateway 地址，即可测试连接、登录、移动、领取奖励和切换场景；本机直接连接远程服务器。
+**战斗版本的玩法与两台 VPS 更新步骤见 [COMBAT.md](docs/COMBAT.md)。Windows 测试已部署的服务器，优先使用 [桌面客户端](docs/DESKTOP_CLIENT.md)。** 构建后双击 `dist/desktop/MMO.Client.exe`，填写 gateway 地址，即可测试连接、登录、移动、领取奖励和切换场景；本机直接连接远程服务器。
 
 **两台 VPS 部署从这里开始：[统一部署流程：gateway + scene + MySQL](docs/DEPLOYMENT_TWO_HOSTS.md)。** 依次完成配置、拉取现成镜像、启动与验收；VPS 不需要编译 Go/C++。同一份文档也包含后续更新、停机、恢复和排错。
 
@@ -26,9 +26,9 @@ flowchart LR
     B --> D[(SQLite / 指定 MySQL)]
 ```
 
-已定义的演示闭环：注册与登录、权威移动、邻近玩家视图、两场景切换、断线重连、一次性领取 100 金币。位置定期保存；金币与领取记录使用事务落盘。两个场景是两个独立进程，可以放在不同机器。
+现有玩法包括注册登录、权威移动、邻近玩家视图、场景切换、断线重连与一次性欢迎奖励，并新增 [PvE 战斗试炼场](docs/COMBAT.md)：四个近战技能、怪物追击反击、血蓝和冷却、死亡复活，以及重连/跨场景战斗快照。两个场景是独立进程，可以放在不同机器。
 
-**这不是完整 MMO 产品。** 当前实现采用 HTTP/JSON、网关轮询场景视图和单实例 Backend（可选 SQLite / MySQL）；没有 NPC、技能战斗、跨区无缝世界、自动场景故障迁移及生产账号系统。详细约束见 [协议](docs/PROTOCOL.md)；长期目标与当前 MVP 应分开阅读，见 [架构设计](ARCHITECTURE.md)。
+**这不是完整 MMO 产品。** 当前实现采用 HTTP/JSON、网关轮询场景视图和单实例 Backend（可选 SQLite / MySQL）；包含基础 PvE 怪物和技能，但尚无装备等级任务、跨区无缝世界、自动场景故障迁移及生产账号系统。详细约束见 [协议](docs/PROTOCOL.md)；长期目标与当前 MVP 应分开阅读，见 [架构设计](ARCHITECTURE.md)。
 
 ## Windows 桌面客户端
 

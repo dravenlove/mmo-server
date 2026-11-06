@@ -94,6 +94,9 @@ func openSQLiteStore(path string) (*store, error) {
 		 scene_id TEXT NOT NULL, owner_epoch INTEGER NOT NULL, epoch_counter INTEGER NOT NULL,
 		 session_epoch INTEGER NOT NULL, x REAL NOT NULL, y REAL NOT NULL, coins INTEGER NOT NULL CHECK(coins>=0))`,
 		`CREATE TABLE IF NOT EXISTS claims (operation_id TEXT PRIMARY KEY, role_id TEXT NOT NULL REFERENCES roles(role_id))`,
+		`CREATE TABLE IF NOT EXISTS combat_snapshots (
+		 role_id TEXT PRIMARY KEY REFERENCES roles(role_id), owner_epoch INTEGER NOT NULL,
+		 session_epoch INTEGER NOT NULL, revision INTEGER NOT NULL, state_json TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS migrations (
 		 role_id TEXT NOT NULL REFERENCES roles(role_id), request_id TEXT NOT NULL, transfer_id TEXT NOT NULL UNIQUE,
 		 target_scene_id TEXT NOT NULL, status TEXT NOT NULL, source_json TEXT NOT NULL, target_json TEXT NOT NULL,
@@ -116,6 +119,9 @@ func (s *Server) role(ctx context.Context, id string) (Role, error) {
 	r, err := scanRole(s.db.QueryRowContext(ctx, "SELECT "+columns+" FROM roles WHERE role_id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Role{}, &apiError{404, "角色不存在"}
+	}
+	if err == nil {
+		err = s.loadCombat(ctx, &r)
 	}
 	return r, err
 }

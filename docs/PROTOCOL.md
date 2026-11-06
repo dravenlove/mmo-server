@@ -4,20 +4,22 @@
 
 ## 公共结构
 
-Role: `{role_id:string,name:string,scene_id:string,owner_epoch:int64,session_epoch:int64,x:double,y:double,coins:int64}`。
+Role: `{role_id:string,name:string,scene_id:string,owner_epoch:int64,session_epoch:int64,x:double,y:double,coins:int64,combat?:object}`。
 Ref: `{role_id:string,owner_epoch:int64,session_epoch:int64}`。
 Route: `{role:Role,scene_url:string}`。
-View: `{self:Role,players:Role[],tick:uint64,scene_id:string}`。
+View: `{self:Role,players:Role[],tick:uint64,scene_id:string}`；战斗版本追加 mobs、skills、events 及 players_truncated/visible_player_count。旧字段保留。
 
 ## C++ SceneHost
 
 环境：`INTERNAL_TOKEN` 必填；`SCENE_ID=scene-1`；`SCENE_HOST=127.0.0.1`；`SCENE_PORT=9001`；`TICK_HZ=20`；`AOI_RADIUS=30`；`MOVE_SPEED=6`。
-一个实例一个场景，位置限定 [-100,100]。网络线程通过有界命令队列把修改投递到 Tick 线程；tick 负责移动与角色状态。网络等待响应有超时，超时不撤销已入队命令。每个角色最多 128 个；拒绝超限。
+一个实例一个场景，位置限定 [-100,100]。网络线程通过有界命令队列把修改投递到 Tick 线程；tick 负责移动、战斗与怪物状态。网络等待响应有超时，超时不撤销已入队命令。每个场景最多保留 128 个已加载角色，包括离线、冻结和待激活角色；拒绝超限。
 
 - GET `/healthz`: `{ok:true,scene_id:string,tick:uint64,players:int}`。
 - POST `/v1/enter`: `{role:Role}` → `{role:Role}`。同 role、同 owner_epoch 新 session 更新会话、重置输入序号/速度、保留当前坐标；同 session 重试保留状态；旧代次拒绝。初次创建即激活，本调用仅由 Backend 在验证归属后发出。冻结/待激活角色不可通过 enter 绕过迁移。
 - POST `/v1/move`: Ref 加 `{seq:int64,dx:double,dy:double}` → `{accepted:true}`。seq 必须递增，方向分量 [-1,1]，对角归一化；新输入更新速度，250ms 无新输入自动停下。冻结/待激活或旧 Ref 拒绝。
-- POST `/v1/view`: Ref → View。只返回 AOI 半径内活跃玩家（含 self），排序稳定。
+- POST `/v1/cast`: Ref 加 `{seq:int64,skill_id:string,target_id?:string}` → 技能结算结果。斩击和突进须指定存活怪物 ID；旋风斩和战意恢复的目标可省略、为空或填写自身角色 ID。技能、目标、距离、法力、冷却和存活状态由场景检查；当前会话最近一次成功动作的相同序号和内容可返回缓存结果，更旧或内容冲突的序号拒绝且不重复结算。
+- POST `/v1/revive`: Ref 加 `{seq:int64}` → 复活结果。死亡等待约 5 秒后由服务器将角色移至原点，恢复 180 生命和 100 法力，保留剩余技能冷却；重复成功动作不会再结算。
+- POST `/v1/view`: Ref → View。返回 AOI 半径内处于 Active 状态的角色，按 role_id 稳定排序；极端帧预算下可裁剪其他角色，自身始终保留。
 - POST `/v1/freeze`: Ref 加 `{transfer_id:string}` → `{role:Role}`。冻结并停止运动；同 transfer_id 重试返回同一状态。
 - POST `/v1/unfreeze`: Ref 加 `{transfer_id:string}` → `{accepted:true}`。仅匹配迁移可恢复；已解冻的相同请求可幂等成功。
 - POST `/v1/prepare`: `{role:Role,transfer_id:string}` → `{role:Role}`。目标使用 Backend 持久预留的更大 owner_epoch 创建待激活对象；失败迁移也消耗代次，不能假定恰好 +1。相同 Ref/transfer 重试幂等；冲突拒绝。准备对象不得 view/move/enter 或影响其他角色。
@@ -50,8 +52,24 @@ View: `{self:Role,players:Role[],tick:uint64,scene_id:string}`。
 - `view`：返回当前 View。
 - `transfer` + target_scene_id/request_id：请求 Backend 迁移，更新 Route。
 - `claim`：领取一次 demo 奖励。
+- `cast` + seq/skill_id/target_id：Gateway 使用已登录角色的可信 Ref 调用当前场景，客户端不提供伤害或 HP。
+- `revive` + seq：请求当前场景执行死亡等待后的复活。
 - `ping`：返回时间。
 
 Gateway 每 200ms 读取一次 View 并推送，每 1 秒验证 Backend session，每 2 秒保存一次当前位置，正常断开尽力保存。视图轮询是明确的 MVP 简化，尚非 gRPC 场景批量推送。每连接单写入者、读写超时、连接与消息速率上限；慢客户端关闭。旧会话失效必须关闭/停止输入。
 
-场景不可用时返回明确错误，不能把路由切到另一个场景。场景重启后通过重新 login 从最近快照入场；位置允许回退，已提交金币持久。演示没有 NPC、技能战斗、自动故障迁移和生产账号系统。
+场景不可用时返回明确错误，不能把路由切到另一个场景。场景重启后通过重新 login 从最近快照入场；位置和战斗状态可能回退检查点之后的变化，已提交金币持久。当前包含 PvE 怪物和技能战斗，尚未提供自动故障迁移及生产账号系统。
+
+## 战斗状态与兼容
+
+Role 可追加 `combat` 对象：`hp,max_hp,mp,max_mp,dead,revive_remaining_ms,revision,last_action_seq,action_session,cooldowns`；cooldowns 为 strike/whirlwind/charge/mend 四项剩余毫秒。自身角色和迁移/检查点使用完整状态，其他可见玩家可仅带血量摘要。处于 Active 状态且存活的角色每秒恢复 6 法力，最多 100。新会话只清动作序号，血蓝/冷却保留；冻结或待激活角色不参与战斗，法力恢复、技能冷却和复活倒计时均暂停。
+
+施法和复活共享同一会话的单调动作序号高水位。动作结果缓存仅留在当前进程的角色对象中，不随迁移快照保存；目标场景或重启进程恢复后，旧序号可被拒绝，但不会重新结算。网络超时重试同一次技能时应复用原序号，不得自动换新序号重复发送。
+
+View.mobs 含 `id,name,kind,x,y,hp,max_hp,alive,respawn_remaining_ms,target_id`；skills 含 `id,name,description,range,cooldown_ms,mp_cost,damage,heal,target`；events 含最近最多32项 `id,type,source_id,target_id,skill_id,value,x,y,tick`。事件类型包含 cast/damage/heal/death/respawn/revive/reset，客户端应按场景和事件id去重，初次加入不回放历史伤害。
+
+`cast` 返回 `{accepted,seq,skill_id,target_id,hits:[{target_id,damage,hp,max_hp,dead}],healed,role,tick}`，`revive` 返回 `{accepted,seq,role,tick}`。目标只允许当前可交互的怪物；本版未开放 PvP。
+
+为遵守64KiB外部帧限制，极端满员/长名字的AOI视图可裁剪其他players；`players_truncated=true` 时，`visible_player_count` 表示未裁剪总数，自身始终保留。
+
+Backend 的 `combat_snapshots` 表新增保存当前角色的归属、会话、版本和完整JSON状态。快照写入与位置/归属修改使用相同事务校验，旧会话、旧归属及低版本不能回退当前快照。战斗技能不是逐次持久事务；进程故障会恢复最近检查点，边界与玩法见 [战斗说明](COMBAT.md)。

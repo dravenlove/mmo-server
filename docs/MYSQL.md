@@ -6,7 +6,7 @@ Backend 可通过配置选择 SQLite 或指定的 MySQL，Gateway 和 C++ 场景
 
 ## 1. 数据库准备
 
-支持 MySQL **8.0.16 或更高版本**，实际验证使用 MySQL 8.0.46。连接到 MySQL 的可写主实例，并为本服务准备独立数据库。Backend 首次启动会在指定库中创建 `roles`、`claims`、`migrations` 三张 InnoDB 表，不会自动创建数据库或账号。
+支持 MySQL **8.0.16 或更高版本**，实际验证使用 MySQL 8.0.46。连接到 MySQL 的可写主实例，并为本服务准备独立数据库。Backend 首次启动会在指定库中创建 `roles`、`claims`、`migrations`、`combat_snapshots` 四张 InnoDB 表，不会自动创建数据库或账号。战斗版新增最后一张表，原有三张表不需要手工 ALTER；应用账号仍需有建表权限。
 
 例如由数据库管理员创建应用库和账号，下面的地址、库名和密码均为示例：
 

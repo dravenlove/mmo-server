@@ -11,6 +11,10 @@ certs
 deploy/certs
 build
 scene/build
+desktop/**/bin
+desktop/**/obj
+**/*.credential
+**/*.pending
 bin
 out
 output

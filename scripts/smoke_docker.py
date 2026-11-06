@@ -20,6 +20,7 @@ parser.add_argument('--tag', required=True)
 parser.add_argument('--image-prefix', default='mmo')
 parser.add_argument('--database', choices=('sqlite', 'mysql'), default='sqlite')
 parser.add_argument('--mysql-image', default='mysql:8.0', help='隔离测试使用的本地 MySQL 镜像')
+parser.add_argument('--combat', action='store_true', help='额外验收战斗、技能、死亡复活与战斗快照恢复')
 args = parser.parse_args()
 TAG = args.tag
 PREFIX = args.image_prefix.rstrip('/')
@@ -114,7 +115,7 @@ def cli(commands, logname):
     assert result.returncode == 0, result.stderr
     parsed = {}
     for line in result.stdout.splitlines():
-        if ': ' in line and line.split(': ', 1)[0] in ('view', 'claim', 'move', 'transfer'):
+        if ': ' in line and line.split(': ', 1)[0] in ('view', 'claim', 'move', 'transfer', 'cast', 'revive'):
             op, data = line.split(': ', 1)
             parsed.setdefault(op, []).append(json.loads(data))
     return parsed
@@ -168,6 +169,25 @@ try:
     assert first['view'][-1]['scene_id'] == 'scene-2'
     saved = first['view'][-1]['self']
     passed('packaged CLI and writable credential volume under UID 10001')
+    if args.combat:
+        from combat_checks import run_checks
+
+        def combat_checkpoint(role):
+            code, result = http(f'http://127.0.0.1:{ports["backend"]}/v1/checkpoint', {'role': role}, token)
+            assert code == 200 and result['ok'], result
+
+        def combat_restart():
+            close_peers()
+            compose_ok('stop', 'gateway')
+            compose_ok('stop', 'backend')
+            compose_ok('stop', 'scene1', 'scene2')
+            compose_ok('up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '90')
+
+        run_checks(new_peer, passed, combat_checkpoint, combat_restart)
+        exercised = cli([{'op': 'cast', 'skill_id': 'charge', 'target_id': 'npc-1'}, {'op': 'view'}], 'cli-combat')
+        assert exercised['cast'][0]['accepted'] and exercised['view'][0]['self']['combat']['cooldowns']['charge'] > 0
+        saved = exercised['view'][0]['self']
+        passed('container CLI casts skills and reads authoritative combat state')
     close_peers()
     time.sleep(2.5)
     if args.database == 'mysql':
@@ -202,7 +222,7 @@ try:
     names = compose_ok('ps', '-q').stdout.split()
     stats = run(['docker', 'stats', '--no-stream', '--format', '{{json .}}', *names])
     (work / 'stats.jsonl').write_text(stats.stdout, encoding='utf-8')
-    report = {'ok': True, 'image_tag': TAG, 'image_prefix': PREFIX, 'database': args.database, 'checks': checks, 'count': len(checks),
+    report = {'ok': True, 'image_tag': TAG, 'image_prefix': PREFIX, 'database': args.database, 'combat': args.combat, 'checks': checks, 'count': len(checks),
               'scope': 'Linux containers on one Docker engine; no real VPS network, TLS or capacity test'}
     (work / 'report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(f'PASS {len(checks)} Docker checks; report: {work / "report.json"}', flush=True)

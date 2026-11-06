@@ -78,6 +78,10 @@ func (s *Server) transfer(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	m.Source.X, m.Source.Y = frozen.Role.X, frozen.Role.Y
 	m.Target.X, m.Target.Y = frozen.Role.X, frozen.Role.Y
+	if hasCombat(frozen.Role.Combat) {
+		m.Source.Combat = append(json.RawMessage(nil), frozen.Role.Combat...)
+		m.Target.Combat = append(json.RawMessage(nil), frozen.Role.Combat...)
+	}
 	sourceJSON, _ := json.Marshal(m.Source)
 	targetJSON, _ := json.Marshal(m.Target)
 	if _, err = s.db.ExecContext(ctx, "UPDATE migrations SET source_json=?,target_json=? WHERE role_id=? AND request_id=? AND status='PREPARING'", string(sourceJSON), string(targetJSON), m.RoleID, m.RequestID); err != nil {
@@ -157,6 +161,9 @@ func (s *Server) commitMigration(ctx context.Context, m *migration) error {
 	if n != 1 {
 		return conflict("迁移提交时源归属已变化")
 	}
+	if err = saveCombat(ctx, tx, m.Target); err != nil {
+		return err
+	}
 	result, err = tx.ExecContext(ctx, "UPDATE migrations SET status='COMMITTED' WHERE role_id=? AND request_id=? AND status='PREPARING'", m.RoleID, m.RequestID)
 	if err != nil {
 		return err
@@ -204,12 +211,19 @@ func (s *Server) abortMigration(ctx context.Context, m *migration) error {
 	}
 	err = s.callScene(ctx, m.Source.SceneID, "unfreeze", transferRef{m.Source.Ref(), m.TransferID}, nil)
 	var sceneErr *sceneError
-	if errors.As(err, &sceneErr) && sceneErr.Status == 404 {
-		// 源进程重启丢失角色时，只能按仍然有效的源归属恢复。
+	if err == nil || (errors.As(err, &sceneErr) && sceneErr.Status == 404) {
+		// enter 对仍活跃的相同会话不覆写实时数据，同时取得解冻后的权威快照。
+		// 源进程重启时则按仍有效的源归属恢复到已保存的冻结快照。
 		var result roleResult
 		err = s.callScene(ctx, m.Source.SceneID, "enter", map[string]any{"role": m.Source}, &result)
 		if err == nil && !validSnapshot(result.Role, m.Source) {
 			err = fmt.Errorf("invalid restored role")
+		}
+		if err == nil {
+			m.Source.X, m.Source.Y = result.Role.X, result.Role.Y
+			if hasCombat(result.Role.Combat) {
+				m.Source.Combat = result.Role.Combat
+			}
 		}
 	}
 	if err != nil {
@@ -222,6 +236,9 @@ func (s *Server) abortMigration(ctx context.Context, m *migration) error {
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, "UPDATE roles SET x=?,y=? WHERE role_id=? AND owner_epoch=? AND session_epoch=?", m.Source.X, m.Source.Y, m.RoleID, m.Source.OwnerEpoch, m.Source.SessionEpoch); err != nil {
+		return err
+	}
+	if err = saveCombat(ctx, tx, m.Source); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE migrations SET status='ABORTED' WHERE role_id=? AND request_id=?", m.RoleID, m.RequestID); err != nil {
@@ -259,7 +276,26 @@ func (s *Server) finishCommitted(ctx context.Context, m *migration) error {
 	if err = s.callScene(ctx, m.Source.SceneID, "remove", transferRef{m.Source.Ref(), m.TransferID}, nil); err != nil {
 		return unavailable("目标已激活，等待源场景清理；请稍后重试")
 	}
-	return s.setStatus(ctx, m, "DONE")
+	// 完成标记与目标最新快照一起提交，避免恢复重试把目标实时战斗进度回退。
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "UPDATE roles SET x=?,y=? WHERE role_id=? AND owner_epoch=? AND session_epoch=?", result.Role.X, result.Role.Y, m.RoleID, m.Target.OwnerEpoch, m.Target.SessionEpoch); err != nil {
+		return err
+	}
+	if err = saveCombat(ctx, tx, result.Role); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE migrations SET status='DONE' WHERE role_id=? AND request_id=?", m.RoleID, m.RequestID); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	m.Status = "DONE"
+	return nil
 }
 
 func (s *Server) recoverMigration(ctx context.Context, m *migration) error {

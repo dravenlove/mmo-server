@@ -256,7 +256,21 @@ func (s *Server) login(ctx context.Context, raw json.RawMessage) (any, error) {
 		return nil, unavailable("场景返回了无效角色快照")
 	}
 	r.X, r.Y = result.Role.X, result.Role.Y
-	if _, err = s.db.ExecContext(ctx, "UPDATE roles SET x=?,y=? WHERE role_id=? AND owner_epoch=? AND session_epoch=?", r.X, r.Y, r.RoleID, r.OwnerEpoch, r.SessionEpoch); err != nil {
+	if hasCombat(result.Role.Combat) {
+		r.Combat = result.Role.Combat
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "UPDATE roles SET x=?,y=? WHERE role_id=? AND owner_epoch=? AND session_epoch=?", r.X, r.Y, r.RoleID, r.OwnerEpoch, r.SessionEpoch); err != nil {
+		return nil, err
+	}
+	if err = saveCombat(ctx, tx, r); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
 	return s.route(r), nil
@@ -284,7 +298,8 @@ func validPosition(x, y float64) bool {
 	return !math.IsNaN(x) && !math.IsNaN(y) && !math.IsInf(x, 0) && !math.IsInf(y, 0) && x >= -100 && x <= 100 && y >= -100 && y <= 100
 }
 func validSnapshot(actual, expected Role) bool {
-	return actual.Ref() == expected.Ref() && actual.SceneID == expected.SceneID && validPosition(actual.X, actual.Y)
+	_, err := combatRevision(actual.Combat)
+	return err == nil && actual.Ref() == expected.Ref() && actual.SceneID == expected.SceneID && validPosition(actual.X, actual.Y)
 }
 
 func (s *Server) checkpoint(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -296,9 +311,17 @@ func (s *Server) checkpoint(ctx context.Context, raw json.RawMessage) (any, erro
 	if r.RoleID == "" || r.OwnerEpoch <= 0 || r.SessionEpoch <= 0 || !validPosition(r.X, r.Y) {
 		return nil, bad("无效角色快照")
 	}
+	if _, err := combatRevision(r.Combat); err != nil {
+		return nil, err
+	}
 	// 单 Backend + 全局串行锁使归属提交与检查点更新共享同一串行化边界。
 	// SQLite 文件锁 / MySQL 会话锁共同保证只有一个 Backend；本实现不支持多副本。
-	result, err := s.db.ExecContext(ctx, "UPDATE roles SET x=?,y=? WHERE role_id=? AND scene_id=? AND owner_epoch=? AND session_epoch=? AND NOT EXISTS(SELECT 1 FROM migrations WHERE role_id=? AND status NOT IN ('DONE','ABORTED'))", r.X, r.Y, r.RoleID, r.SceneID, r.OwnerEpoch, r.SessionEpoch, r.RoleID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, "UPDATE roles SET x=?,y=? WHERE role_id=? AND scene_id=? AND owner_epoch=? AND session_epoch=? AND NOT EXISTS(SELECT 1 FROM migrations WHERE role_id=? AND status NOT IN ('DONE','ABORTED'))", r.X, r.Y, r.RoleID, r.SceneID, r.OwnerEpoch, r.SessionEpoch, r.RoleID)
 	if err != nil {
 		return nil, err
 	}
@@ -308,6 +331,12 @@ func (s *Server) checkpoint(ctx context.Context, raw json.RawMessage) (any, erro
 	}
 	if n != 1 {
 		return nil, conflict("快照归属或会话已失效，或角色正在迁移")
+	}
+	if err = saveCombat(ctx, tx, r); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
 	}
 	return map[string]bool{"ok": true}, nil
 }

@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
             reply(response, 200, runtime.health());
         });
 
-        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/view", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove"}) {
+        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/view", "/v1/cast", "/v1/revive", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove"}) {
             server.Post(path, [&, path](const httplib::Request& request, httplib::Response& response) {
                 if (!token_matches(request.get_header_value("X-Internal-Token"), token)) {
                     reply(response, 401, {{"error", "invalid internal token"}});

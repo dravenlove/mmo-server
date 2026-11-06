@@ -204,7 +204,7 @@ func run() error {
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 			return nil
 		}
-		if req["op"] == "move" {
+		if req["op"] == "move" || req["op"] == "cast" || req["op"] == "revive" {
 			if explicit, exists := req["seq"]; exists {
 				value, ok := explicit.(float64)
 				if !ok || value < 1 || value > 9007199254740991 || math.Trunc(value) != value {
@@ -254,7 +254,7 @@ func run() error {
 		}
 		return s.Err()
 	}
-	fmt.Println("命令: view | move dx dy | transfer scene-1 [request_id] | claim | ping | quit。move 是一次方向输入，250ms 后自动停止。")
+	fmt.Println("命令: view | move dx dy | cast 技能ID [怪物ID] | revive | transfer scene-1 [request_id] | claim | ping | quit。技能: strike / whirlwind / charge / mend。")
 	lines := make(chan string)
 	go func() {
 		s := bufio.NewScanner(os.Stdin)
@@ -286,10 +286,19 @@ func run() error {
 			}
 			req := map[string]any{"op": fields[0]}
 			switch fields[0] {
-			case "view", "claim", "ping":
+			case "view", "claim", "ping", "revive":
 				if len(fields) != 1 {
 					fmt.Println("参数过多")
 					continue
+				}
+			case "cast":
+				if len(fields) != 2 && len(fields) != 3 {
+					fmt.Println("用法: cast strike npc-1 | cast whirlwind | cast charge npc-1 | cast mend")
+					continue
+				}
+				req["skill_id"] = fields[1]
+				if len(fields) == 3 {
+					req["target_id"] = fields[2]
 				}
 			case "move":
 				if len(fields) != 3 {

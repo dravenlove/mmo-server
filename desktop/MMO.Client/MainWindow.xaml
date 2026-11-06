@@ -2,82 +2,89 @@
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:local="clr-namespace:Mmo.Client.Desktop"
- Title="MMO 联调客户端" Width="1260" Height="850" MinWidth="1080" MinHeight="740"
- Background="#0B1220" FontFamily="Microsoft YaHei UI" FontSize="13"
+ Title="MMO 战斗试炼" Width="1360" Height="960" MinWidth="1140" MinHeight="820"
+ Background="#0A111C" FontFamily="Microsoft YaHei UI" FontSize="13"
  WindowStartupLocation="CenterScreen" PreviewKeyDown="Window_KeyDown" PreviewKeyUp="Window_KeyUp" Deactivated="Window_Deactivated" Closing="Window_Closing">
- <Grid Margin="22,16,22,18">
-  <Grid.RowDefinitions><RowDefinition Height="66"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="110"/></Grid.RowDefinitions>
-  <DockPanel Grid.Row="0">
-   <StackPanel DockPanel.Dock="Left">
-    <TextBlock Text="MMO 联调客户端" FontSize="25" FontWeight="SemiBold"/>
-    <TextBlock Text="本机连接远程网关 · 实时场景与业务验收" Foreground="#8EA3C2" Margin="0,5,0,0"/>
-   </StackPanel>
-   <Border x:Name="StatusPlate" DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Top" Background="#1D2B42" CornerRadius="16" Padding="15,8">
-    <TextBlock x:Name="StatusLabel" Text="●  尚未连接" Foreground="#9BAEC9"/>
-   </Border>
+ <Window.Resources>
+  <Style x:Key="ResourceBar" TargetType="ProgressBar">
+   <Setter Property="Height" Value="10"/><Setter Property="Minimum" Value="0"/><Setter Property="Maximum" Value="100"/>
+   <Setter Property="Background" Value="#09121F"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ProgressBar">
+    <Border Background="{TemplateBinding Background}" CornerRadius="4"><Grid x:Name="PART_Track"><Border x:Name="PART_Indicator" HorizontalAlignment="Left" Background="{TemplateBinding Foreground}" CornerRadius="4"/></Grid></Border>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="CombatSkillButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="SkillPlate" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="SkillPlate" Property="Opacity" Value="0.9"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="SkillPlate" Property="Opacity" Value="0.65"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="SkillPlate" Property="Opacity" Value="0.76"/><Setter Property="Cursor" Value="Arrow"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+  </Style>
+ </Window.Resources>
+ <Grid Margin="20,14,20,14">
+  <Grid.RowDefinitions><RowDefinition Height="58"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="108"/><RowDefinition Height="100"/></Grid.RowDefinitions>
+  <DockPanel>
+   <StackPanel><TextBlock Text="MMO 战斗试炼" FontSize="25" FontWeight="SemiBold"/><TextBlock Text="先锋 · PvE 试炼场  /  Go + C++ 权威战斗" Foreground="#8BA1B6" Margin="0,3,0,0"/></StackPanel>
+   <Border x:Name="StatusPlate" HorizontalAlignment="Right" VerticalAlignment="Top" Background="#1D2B42" CornerRadius="16" Padding="15,8"><TextBlock x:Name="StatusLabel" Text="● 尚未连接" Foreground="#9BAEC9"/></Border>
   </DockPanel>
-  <Border Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="16" Margin="0,0,0,14">
+  <Border Grid.Row="1" Background="#111D2D" BorderBrush="#26374A" BorderThickness="1" CornerRadius="10" Padding="13" Margin="0,0,0,12">
    <Grid>
-    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="200"/><ColumnDefinition Width="190"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="174"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <TextBlock Grid.Column="0" Text="网关地址（IP 或域名:端口）" Foreground="#8EA3C2" Margin="0,0,0,7"/>
-    <TextBlock Grid.Column="1" Text="本机角色档案" Foreground="#8EA3C2" Margin="12,0,0,7"/>
-    <TextBlock Grid.Column="2" Text="连接方式" Foreground="#8EA3C2" Margin="12,0,0,7"/>
+    <TextBlock Text="网关地址" Foreground="#8EA3C2" Margin="0,0,0,5"/><TextBlock Grid.Column="1" Text="角色档案" Foreground="#8EA3C2" Margin="10,0,0,5"/><TextBlock Grid.Column="2" Text="连接方式" Foreground="#8EA3C2" Margin="10,0,0,5"/>
     <TextBox x:Name="AddressBox" Grid.Row="1" Text="127.0.0.1:7000" AutomationProperties.AutomationId="GatewayAddress"/>
-    <TextBox x:Name="ProfileBox" Grid.Row="1" Grid.Column="1" Text="desktop-check" Margin="12,0,0,0" AutomationProperties.AutomationId="ProfileName"/>
-    <CheckBox x:Name="TlsBox" Grid.Row="1" Grid.Column="2" Content="TLS 加密（校验证书）" Margin="12,0,0,0" Checked="Tls_Changed" Unchecked="Tls_Changed"/>
-    <StackPanel Grid.Row="1" Grid.Column="3" Orientation="Horizontal" Margin="14,0,0,0">
-     <Button x:Name="ProbeButton" Content="测试连接" Click="Probe_Click" Margin="0,0,8,0" AutomationProperties.AutomationId="ProbeConnection"/>
-     <Button x:Name="ConnectButton" Content="连接并登录" Click="Connect_Click" Background="#326BE5" BorderBrush="#4D87FC" AutomationProperties.AutomationId="ConnectAndLogin"/>
-     <Button x:Name="DisconnectButton" Content="断开" Click="Disconnect_Click" Margin="8,0,0,0" IsEnabled="False"/>
-    </StackPanel>
-    <TextBlock x:Name="ConnectionHint" Grid.Row="2" Grid.ColumnSpan="4" Margin="0,10,0,0" Foreground="#8498B8" TextWrapping="Wrap" Text="先测试网关是否可达，再连接角色。明文 TCP 适合联调；公网使用 TLS 可保护登录凭据。"/>
+    <TextBox x:Name="ProfileBox" Grid.Row="1" Grid.Column="1" Text="desktop-check" Margin="10,0,0,0" AutomationProperties.AutomationId="ProfileName"/>
+    <CheckBox x:Name="TlsBox" Grid.Row="1" Grid.Column="2" Content="TLS 加密（校验证书）" Margin="10,0,0,0" Checked="Tls_Changed" Unchecked="Tls_Changed"/>
+    <StackPanel Grid.Row="1" Grid.Column="3" Orientation="Horizontal" Margin="12,0,0,0"><Button x:Name="ProbeButton" Content="测试连接" Click="Probe_Click" Margin="0,0,7,0" AutomationProperties.AutomationId="ProbeConnection"/><Button x:Name="ConnectButton" Content="连接并登录" Click="Connect_Click" Background="#326BE5" BorderBrush="#4D87FC" AutomationProperties.AutomationId="ConnectAndLogin"/><Button x:Name="DisconnectButton" Content="断开" Click="Disconnect_Click" Margin="7,0,0,0" IsEnabled="False"/></StackPanel>
+    <TextBlock x:Name="ConnectionHint" Grid.Row="2" Grid.ColumnSpan="4" Margin="0,7,0,0" Foreground="#7991AC" FontSize="11" TextWrapping="Wrap" Text="先测试连接，再登录角色。公网启用 TLS 可保护登录凭据。"/>
    </Grid>
   </Border>
-  <Grid Grid.Row="2" Margin="0,0,0,14">
-   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="320"/></Grid.ColumnDefinitions>
-   <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="16" Margin="0,0,14,0">
-    <Grid>
-     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-     <DockPanel Margin="0,0,0,12"><Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="刷新视图" Padding="10,4" Margin="12,0,0,0" IsEnabled="False" Click="Refresh_Click"/><TextBlock Text="实时场景" FontWeight="SemiBold" FontSize="16"/><TextBlock x:Name="TickLabel" HorizontalAlignment="Right" VerticalAlignment="Center" Text="等待服务器状态" Foreground="#8EA3C2"/></DockPanel>
+  <Grid Grid.Row="2" Margin="0,0,0,12">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="300"/></Grid.ColumnDefinitions>
+   <Border Background="#111D2D" BorderBrush="#26374A" BorderThickness="1" CornerRadius="10" Padding="13" Margin="0,0,12,0">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+     <DockPanel Margin="0,0,0,10"><Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="刷新视图" Padding="9,4" Margin="10,0,0,0" IsEnabled="False" Click="Refresh_Click"/><TextBlock Text="试炼区域" FontWeight="SemiBold" FontSize="16"/><TextBlock x:Name="TickLabel" HorizontalAlignment="Right" VerticalAlignment="Center" Text="等待服务器状态" Foreground="#8EA3C2" FontSize="11"/></DockPanel>
      <local:WorldCanvas x:Name="World" Grid.Row="1" Focusable="True" MouseDown="World_MouseDown"/>
-     <DockPanel Grid.Row="2" Margin="0,10,0,0"><TextBlock Text="● 自己" Foreground="#4ADEAC"/><TextBlock Text="    ● 邻近玩家" Foreground="#64A8FF"/><TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" Text="点击场景后按 WASD / 方向键移动" Foreground="#8EA3C2"/></DockPanel>
+     <DockPanel Grid.Row="2" Margin="0,8,0,0"><TextBlock Text="● 自己   ● 邻近玩家   ◆ 精英怪" Foreground="#8AA7B4" FontSize="11"/><TextBlock HorizontalAlignment="Right" Text="点击怪物选中 · 点击地面后 WASD 移动" Foreground="#8AA7B4" FontSize="11"/></DockPanel>
     </Grid>
    </Border>
-   <Border Grid.Column="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-     <StackPanel>
-      <TextBlock Text="角色状态" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,7"/>
-      <TextBlock x:Name="RoleNameLabel" Text="尚未登录" FontSize="21" FontWeight="SemiBold"/>
-      <TextBlock x:Name="SceneLabel" Text="场景  —" Foreground="#8EA3C2" Margin="0,3,0,0"/>
-      <TextBlock x:Name="PositionLabel" Text="坐标  —" Foreground="#8EA3C2" Margin="0,3,0,0"/>
-      <Grid Margin="0,8,0,7"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
-       <StackPanel><TextBlock Text="金币" Foreground="#8EA3C2"/><TextBlock x:Name="CoinsLabel" Text="—" FontSize="24" Foreground="#F6CF76"/></StackPanel>
-       <StackPanel Grid.Column="1"><TextBlock Text="往返延迟" Foreground="#8EA3C2"/><TextBlock x:Name="LatencyLabel" Text="—" FontSize="24"/></StackPanel>
-      </Grid>
-      <Button x:Name="ClaimButton" Content="领取 100 金币" IsEnabled="False" Click="Claim_Click"/>
-      <TextBlock Text="移动控制 · 按住方向按钮" Foreground="#8EA3C2" Margin="0,6,0,5"/>
-      <Grid HorizontalAlignment="Center">
-       <Grid.RowDefinitions><RowDefinition Height="36"/><RowDefinition Height="36"/></Grid.RowDefinitions>
-       <Grid.ColumnDefinitions><ColumnDefinition Width="65"/><ColumnDefinition Width="65"/><ColumnDefinition Width="65"/></Grid.ColumnDefinitions>
-       <Button x:Name="UpButton" Grid.Column="1" Content="↑" Tag="0,1" Margin="3" IsEnabled="False" PreviewMouseLeftButtonDown="Move_Down" PreviewMouseLeftButtonUp="Move_Up" LostMouseCapture="Move_LostCapture"/>
-       <Button x:Name="LeftButton" Grid.Row="1" Content="←" Tag="-1,0" Margin="3" IsEnabled="False" PreviewMouseLeftButtonDown="Move_Down" PreviewMouseLeftButtonUp="Move_Up" LostMouseCapture="Move_LostCapture"/>
-       <Button x:Name="DownButton" Grid.Row="1" Grid.Column="1" Content="↓" Tag="0,-1" Margin="3" IsEnabled="False" PreviewMouseLeftButtonDown="Move_Down" PreviewMouseLeftButtonUp="Move_Up" LostMouseCapture="Move_LostCapture"/>
-       <Button x:Name="RightButton" Grid.Row="1" Grid.Column="2" Content="→" Tag="1,0" Margin="3" IsEnabled="False" PreviewMouseLeftButtonDown="Move_Down" PreviewMouseLeftButtonUp="Move_Up" LostMouseCapture="Move_LostCapture"/>
-      </Grid>
-      <TextBlock Text="场景切换" Foreground="#8EA3C2" Margin="0,10,0,5"/>
-      <ComboBox x:Name="TargetSceneBox" SelectedIndex="1"><ComboBoxItem Tag="scene-1"><TextBlock Text="scene-1" Foreground="#16213B"/></ComboBoxItem><ComboBoxItem Tag="scene-2"><TextBlock Text="scene-2" Foreground="#16213B"/></ComboBoxItem></ComboBox>
-      <Button x:Name="TransferButton" Content="切换场景" Margin="0,8,0,0" IsEnabled="False" Click="Transfer_Click"/>
-      <TextBlock x:Name="TransferHint" Text="切换过程中会暂时停止移动。" Foreground="#8EA3C2" TextWrapping="Wrap" Margin="0,8,0,0" FontSize="11"/>
-     </StackPanel>
-    </ScrollViewer>
+   <Border Grid.Column="1" Background="#111D2D" BorderBrush="#26374A" BorderThickness="1" CornerRadius="10" Padding="13">
+    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
+     <DockPanel><TextBlock x:Name="RoleNameLabel" Text="尚未登录" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="先锋" Foreground="#AFBBD0" HorizontalAlignment="Right" VerticalAlignment="Center"/></DockPanel>
+     <TextBlock x:Name="SceneLabel" Text="场景 —" Foreground="#8EA3C2" FontSize="11" Margin="0,4,0,0"/>
+     <TextBlock x:Name="PositionLabel" Text="坐标 —" Foreground="#8EA3C2" FontSize="11" Margin="0,3,0,0"/>
+     <Grid Margin="0,10,0,4"><TextBlock Text="生命" Foreground="#CFA5AB"/><TextBlock x:Name="HpLabel" Text="—" HorizontalAlignment="Right"/></Grid>
+     <ProgressBar x:Name="HpBar" Style="{StaticResource ResourceBar}" Foreground="#D16E7D"/>
+     <Grid Margin="0,6,0,4"><TextBlock Text="法力" Foreground="#9CB7D7"/><TextBlock x:Name="MpLabel" Text="—" HorizontalAlignment="Right"/></Grid>
+     <ProgressBar x:Name="MpBar" Style="{StaticResource ResourceBar}" Foreground="#599DE2"/>
+     <TextBlock x:Name="CombatStatusLabel" Text="等待战斗状态" Foreground="#8AA4B8" FontSize="11" Margin="0,6,0,0"/>
+     <Border Background="#19202C" BorderBrush="#3F3D3B" BorderThickness="1" CornerRadius="7" Padding="10" Margin="0,10,0,8"><StackPanel>
+      <DockPanel><TextBlock Text="当前目标" Foreground="#9DA7BA" FontSize="11"/><TextBlock x:Name="TargetDistanceLabel" Text="—" HorizontalAlignment="Right" Foreground="#A9A5A0" FontSize="11"/></DockPanel>
+      <TextBlock x:Name="TargetNameLabel" Text="点击怪物或按 Tab 选中" Foreground="#E4CC96" Margin="0,4,0,5"/>
+      <ProgressBar x:Name="TargetHpBar" Style="{StaticResource ResourceBar}" Foreground="#BE8A5B" Height="7"/>
+      <TextBlock x:Name="TargetHpLabel" Text="—" Foreground="#A8A1A0" FontSize="11" Margin="0,4,0,0"/>
+     </StackPanel></Border>
+     <Button x:Name="ReviveButton" Content="复活" IsEnabled="False" Click="Revive_Click" Background="#49303D" BorderBrush="#8C5C6E" Visibility="Collapsed" Margin="0,0,0,8"/>
+     <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><TextBlock x:Name="CoinsLabel" Text="金币 —" Foreground="#EBCB85"/><TextBlock x:Name="LatencyLabel" Grid.Column="1" Text="延迟 —" HorizontalAlignment="Right" Foreground="#93ABC7"/></Grid>
+     <Grid HorizontalAlignment="Center"><Grid.RowDefinitions><RowDefinition Height="33"/><RowDefinition Height="33"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="58"/><ColumnDefinition Width="58"/><ColumnDefinition Width="58"/></Grid.ColumnDefinitions>
+      <Button x:Name="UpButton" Grid.Column="1" Content="↑" Tag="0,1" Margin="2" Padding="9,3" IsEnabled="False" PreviewMouseLeftButtonDown="Move_Down" PreviewMouseLeftButtonUp="Move_Up" LostMouseCapture="Move_LostCapture"/>
+      <Button x:Name="LeftButton" Grid.Row="1" Content="←" Tag="-1,0" Margin="2" Padding="9,3" IsEnabled="False" PreviewMouseLeftButtonDown="Move_Down" PreviewMouseLeftButtonUp="Move_Up" LostMouseCapture="Move_LostCapture"/>
+      <Button x:Name="DownButton" Grid.Row="1" Grid.Column="1" Content="↓" Tag="0,-1" Margin="2" Padding="9,3" IsEnabled="False" PreviewMouseLeftButtonDown="Move_Down" PreviewMouseLeftButtonUp="Move_Up" LostMouseCapture="Move_LostCapture"/>
+      <Button x:Name="RightButton" Grid.Row="1" Grid.Column="2" Content="→" Tag="1,0" Margin="2" Padding="9,3" IsEnabled="False" PreviewMouseLeftButtonDown="Move_Down" PreviewMouseLeftButtonUp="Move_Up" LostMouseCapture="Move_LostCapture"/>
+     </Grid>
+     <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="86"/></Grid.ColumnDefinitions><ComboBox x:Name="TargetSceneBox" SelectedIndex="1" Padding="6,4"><ComboBoxItem Tag="scene-1"><TextBlock Text="scene-1" Foreground="#16213B"/></ComboBoxItem><ComboBoxItem Tag="scene-2"><TextBlock Text="scene-2" Foreground="#16213B"/></ComboBoxItem></ComboBox><Button x:Name="TransferButton" Grid.Column="1" Content="切换场景" Padding="6,5" Margin="7,0,0,0" IsEnabled="False" Click="Transfer_Click"/></Grid>
+     <TextBlock x:Name="TransferHint" Text="切换过程中会暂时停止移动。" Foreground="#7C92AD" TextWrapping="Wrap" Margin="0,5,0,0" FontSize="10"/>
+     <Button x:Name="ClaimButton" Content="领取测试金币" Padding="9,5" Margin="0,8,0,0" IsEnabled="False" Click="Claim_Click"/>
+    </StackPanel></ScrollViewer>
    </Border>
   </Grid>
-  <Border Grid.Row="3" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="10" Padding="14,10">
-   <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-    <TextBlock Text="连接与操作记录" FontWeight="SemiBold" Margin="0,0,0,6"/>
-    <TextBox x:Name="LogBox" Grid.Row="1" IsReadOnly="True" BorderThickness="0" Padding="0" Background="Transparent" Foreground="#9EB3D0" FontFamily="Consolas, Microsoft YaHei UI" FontSize="12" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+  <Border Grid.Row="3" Background="#151E2D" BorderBrush="#3C465D" BorderThickness="1" CornerRadius="10" Padding="10,9" Margin="0,0,0,10">
+   <Grid><Grid.RowDefinitions><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+     <Button x:Name="StrikeButton" Style="{StaticResource CombatSkillButton}" Tag="strike" Click="Skill_Click" Margin="0,0,7,0" Background="#2B3548" BorderBrush="#6F7183" IsEnabled="False"><Grid Width="204"><TextBlock Text="1  斩击" FontWeight="SemiBold" FontSize="15"/><TextBlock x:Name="StrikeState" Text="等待状态" HorizontalAlignment="Right" Foreground="#F3D18C"/><TextBlock x:Name="StrikeCost" Text="近战 · 无消耗" Foreground="#A5AEC3" FontSize="11" Margin="0,24,0,0"/></Grid></Button>
+     <Button x:Name="WhirlwindButton" Style="{StaticResource CombatSkillButton}" Grid.Column="1" Tag="whirlwind" Click="Skill_Click" Margin="0,0,7,0" Background="#343047" BorderBrush="#81729D" IsEnabled="False"><Grid Width="204"><TextBlock Text="2  旋风斩" FontWeight="SemiBold" FontSize="15"/><TextBlock x:Name="WhirlwindState" Text="等待状态" HorizontalAlignment="Right" Foreground="#D6B7FF"/><TextBlock x:Name="WhirlwindCost" Text="周围范围 · 20 法力" Foreground="#A5AEC3" FontSize="11" Margin="0,24,0,0"/></Grid></Button>
+     <Button x:Name="ChargeButton" Style="{StaticResource CombatSkillButton}" Grid.Column="2" Tag="charge" Click="Skill_Click" Margin="0,0,7,0" Background="#233C4F" BorderBrush="#5A98B8" IsEnabled="False"><Grid Width="204"><TextBlock Text="3  突进" FontWeight="SemiBold" FontSize="15"/><TextBlock x:Name="ChargeState" Text="等待状态" HorizontalAlignment="Right" Foreground="#A8DDFF"/><TextBlock x:Name="ChargeCost" Text="追击目标 · 15 法力" Foreground="#A5AEC3" FontSize="11" Margin="0,24,0,0"/></Grid></Button>
+     <Button x:Name="MendButton" Style="{StaticResource CombatSkillButton}" Grid.Column="3" Tag="mend" Click="Skill_Click" Background="#203C38" BorderBrush="#559484" IsEnabled="False"><Grid Width="204"><TextBlock Text="4  战意恢复" FontWeight="SemiBold" FontSize="15"/><TextBlock x:Name="MendState" Text="等待状态" HorizontalAlignment="Right" Foreground="#A8EAC6"/><TextBlock x:Name="MendCost" Text="恢复生命 · 25 法力" Foreground="#A5AEC3" FontSize="11" Margin="0,24,0,0"/></Grid></Button>
+    </Grid>
+    <TextBlock x:Name="SkillHint" Grid.Row="1" Text="1–4 施放技能 · Tab 切换目标 · 冷却、消耗和伤害由服务器判定" Foreground="#8C9FB8" FontSize="11" Margin="2,6,0,0"/>
    </Grid>
   </Border>
+  <Border Grid.Row="4" Background="#111B29" BorderBrush="#26374A" BorderThickness="1" CornerRadius="10" Padding="12,8"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions><TextBlock Text="战斗与连接记录" FontWeight="SemiBold" Margin="0,0,0,4"/><TextBox x:Name="LogBox" Grid.Row="1" IsReadOnly="True" BorderThickness="0" Padding="0" Background="Transparent" Foreground="#9EB3D0" FontFamily="Consolas, Microsoft YaHei UI" FontSize="11" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/></Grid></Border>
  </Grid>
 </Window>

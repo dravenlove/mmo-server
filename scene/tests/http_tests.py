@@ -60,6 +60,8 @@ def main():
                 duplicate.kill()
                 duplicate.communicate(timeout=3)
         assert request("/v1/enter", {}, authenticated=False)[0] == 401
+        assert request("/v1/cast", {}, authenticated=False)[0] == 401
+        assert request("/v1/revive", {}, authenticated=False)[0] == 401
         assert request("/v1/enter", raw=b"{bad")[0] == 400
         assert request("/v1/enter", raw=b"x" * (65536 + 1))[0] == 413
         assert request("/not-found")[0] == 404
@@ -73,6 +75,15 @@ def main():
         status, view = request("/v1/view", ref)
         assert status == 200 and view["self"]["x"] > 0
         assert request("/v1/move", dict(ref, seq=1, dx=1, dy=0))[0] == 409
+        status, cast = request("/v1/cast", dict(ref, seq=1, skill_id="charge", target_id="npc-1"))
+        assert status == 200 and cast["hits"][0]["damage"] == 24
+        assert request("/v1/cast", dict(ref, seq=1, skill_id="charge", target_id="npc-1")) == (200, cast)
+        assert request("/v1/cast", dict(ref, seq=2, skill_id="charge", target_id="npc-1"))[0] == 409
+        status, combat_view = request("/v1/view", ref)
+        assert status == 200 and combat_view["self"]["combat"]["mp"] < 100
+        assert len(combat_view["mobs"]) == 4 and len(combat_view["skills"]) == 4
+        assert combat_view["events"] and combat_view["events"][-1]["type"] == "damage"
+        assert request("/v1/revive", dict(ref, seq=2))[0] == 409
         assert request("/v1/freeze", dict(ref, transfer_id="http-transfer"))[0] == 200
         assert request("/v1/view", ref)[0] == 409
         assert request("/v1/unfreeze", dict(ref, transfer_id="http-transfer"))[0] == 200

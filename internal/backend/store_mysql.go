@@ -97,10 +97,10 @@ func openMySQLStore(input MySQLConfig) (*store, error) {
 	}
 	var transactionalTables int
 	if err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.TABLES
-	 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('roles','claims','migrations') AND ENGINE='InnoDB'`).Scan(&transactionalTables); err != nil {
+	 WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('roles','claims','migrations','combat_snapshots') AND ENGINE='InnoDB'`).Scan(&transactionalTables); err != nil {
 		return fail(err)
 	}
-	if transactionalTables != 3 {
+	if transactionalTables != 4 {
 		return fail(fmt.Errorf("MySQL 业务表必须使用 InnoDB，不能使用不支持事务的已有表"))
 	}
 	return s, nil
@@ -116,6 +116,11 @@ var mysqlSchema = []string{
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	`CREATE TABLE IF NOT EXISTS claims (
 	 operation_id VARBINARY(160) PRIMARY KEY, role_id VARBINARY(128) NOT NULL,
+	 FOREIGN KEY (role_id) REFERENCES roles(role_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	`CREATE TABLE IF NOT EXISTS combat_snapshots (
+	 role_id VARBINARY(128) PRIMARY KEY, owner_epoch BIGINT NOT NULL,
+	 session_epoch BIGINT NOT NULL, revision BIGINT NOT NULL, state_json TEXT NOT NULL,
 	 FOREIGN KEY (role_id) REFERENCES roles(role_id)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	`CREATE TABLE IF NOT EXISTS migrations (
