@@ -1,5 +1,6 @@
 """启动临时 SceneHost，验证实际 HTTP 入口；结束时只清理自己启动的进程。"""
 
+import http.client
 import json
 import os
 from pathlib import Path
@@ -71,6 +72,37 @@ def main():
         status, result = request("/v1/enter", {"role": role})
         assert status == 200 and result["role"]["role_id"] == role["role_id"]
         ref = {key: role[key] for key in ("role_id", "owner_epoch", "session_epoch")}
+        # 有界线程池不能被客户端保留的 HTTP/1.1 空闲连接耗尽。
+        # 旧实现第九条连接需等待其他连接的 5 秒保活超时，超过 Gateway 的 2 秒期限。
+        retained = []
+        close_headers = []
+        try:
+            for _ in range(12):
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1.5)
+                retained.append(connection)
+                connection.request("GET", "/healthz", headers={"Connection": "keep-alive"})
+                response = connection.getresponse()
+                assert response.status == 200
+                assert json.loads(response.read())["scene_id"] == "http-test"
+                close_headers.append(response.getheader("Connection", "").lower())
+            started = time.monotonic()
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1.5)
+            retained.append(connection)
+            connection.request("POST", "/v1/view", body=json.dumps(ref), headers={
+                "Content-Type": "application/json", "X-Internal-Token": token,
+                "Connection": "keep-alive",
+            })
+            response = connection.getresponse()
+            assert response.status == 200
+            assert json.loads(response.read())["self"]["role_id"] == role["role_id"]
+            elapsed = time.monotonic() - started
+            assert elapsed < 2, f"fresh authenticated view blocked for {elapsed:.3f}s"
+            assert all(value == "close" for value in close_headers), close_headers
+            assert response.getheader("Connection", "").lower() == "close"
+            print(f"scene HTTP idle-connection regression passed: 12 retained clients; fresh view {elapsed:.3f}s")
+        finally:
+            for connection in retained:
+                connection.close()
         assert request("/v1/move", dict(ref, seq=1, dx=1, dy=0))[0] == 200
         time.sleep(0.12)
         status, view = request("/v1/view", ref)

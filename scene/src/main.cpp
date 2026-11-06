@@ -205,6 +205,9 @@ int main(int argc, char** argv) {
         server.set_read_timeout(5);
         server.set_write_timeout(5);
         server.set_keep_alive_timeout(5);
+        // httplib 的一个 HTTP 工作线程会一直占用到整条连接关闭。
+        // 内部调用每次响应后释放连接，避免空闲长连接占满有界线程池。
+        server.set_keep_alive_max_count(1);
         // HTTP 连接线程和待处理连接也有上限。
         server.new_task_queue = [] { return new httplib::ThreadPool(8, 8, 128); };
         Runtime runtime(config);

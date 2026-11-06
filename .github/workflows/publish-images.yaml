@@ -40,8 +40,10 @@ jobs:
           printf 'IMAGE_TAG=%s\nIMAGE_PREFIX=ghcr.io/%s\n' \
             "$tag" "${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
-      - name: Verify scene rules and configuration tool
+      - name: Verify Go, scene rules and configuration tool
         run: |
+          go test ./...
+          go vet ./...
           cmake -S scene -B build/scene-ci -DCMAKE_BUILD_TYPE=Release
           cmake --build build/scene-ci --parallel 2
           ctest --test-dir build/scene-ci --output-on-failure

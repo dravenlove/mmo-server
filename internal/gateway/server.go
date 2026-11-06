@@ -202,6 +202,7 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) call(ctx context.Context, base, path string, in, out any) error {
+	started := time.Now()
 	body, err := json.Marshal(in)
 	if err != nil {
 		return errors.New("invalid request")
@@ -214,11 +215,13 @@ func (s *Server) call(ctx context.Context, base, path string, in, out any) error
 	req.Header.Set("X-Internal-Token", s.cfg.Token)
 	resp, err := s.client.Do(req)
 	if err != nil {
+		s.logUpstreamFailure(base, req, "request", started, err)
 		return &upstreamError{503, "service unavailable or timed out; retry with the same operation id"}
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
+		s.logUpstreamFailure(base, req, "read_body", started, err)
 		return errors.New("service response interrupted")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -233,10 +236,26 @@ func (s *Server) call(ctx context.Context, base, path string, in, out any) error
 	}
 	if out != nil {
 		if err = json.Unmarshal(data, out); err != nil {
+			s.logUpstreamFailure(base, req, "decode", started, err)
 			return errors.New("invalid service response")
 		}
 	}
 	return nil
+}
+
+// 只记录服务地址、固定接口与传输错误，不记录登录/动作正文或内部凭据。
+// 客户端错误保持稳定，运维日志则区分尚未收到响应和正文读取中断。
+func (s *Server) logUpstreamFailure(base string, req *http.Request, phase string, started time.Time, err error) {
+	var transportError *url.Error
+	if errors.As(err, &transportError) {
+		err = transportError.Err
+	}
+	service := "scene"
+	if strings.TrimRight(s.cfg.BackendURL, "/") == strings.TrimRight(base, "/") {
+		service = "backend"
+	}
+	log.Printf("upstream request failed service=%s endpoint=%s path=%s phase=%s elapsed_ms=%d error=%q",
+		service, req.URL.Host, req.URL.Path, phase, time.Since(started).Milliseconds(), err)
 }
 func ref(r Role) map[string]any {
 	return map[string]any{"role_id": r.ID, "owner_epoch": r.Owner, "session_epoch": r.Session}
