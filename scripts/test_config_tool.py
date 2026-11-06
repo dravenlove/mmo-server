@@ -416,6 +416,27 @@ class ConfigToolTests(unittest.TestCase):
             with self.assertRaisesRegex(tool.ToolError, "超时"):
                 tool.DockerRPC(self.paths)("scene1", "reload", {"expected_generation": 1})
 
+    def test_config_endpoint_404_explains_container_upgrade_only_for_404(self):
+        for status, body in ((404, b'{"error":"sensitive-secret"}'), (404, b"404 page not found"),
+                             (409, b'{"error":"sensitive-secret"}'), (401, b'{"error":"sensitive-secret"}')):
+            with self.subTest(status=status, body=body):
+                response = subprocess.CompletedProcess([], 0, body + b"\n" + str(status).encode("ascii"), b"stderr-secret")
+                with patch.object(tool.subprocess, "run", return_value=response):
+                    with self.assertRaises(tool.ToolError) as caught:
+                        tool.DockerRPC(self.paths)("scene1", "status", {})
+                message = str(caught.exception)
+                self.assertIn(f"scene1 status 返回 HTTP {status}", message)
+                self.assertNotIn("sensitive-secret", message)
+                self.assertNotIn("stderr-secret", message)
+                if status == 404:
+                    self.assertIn("当前场景不支持配置管理", message)
+                    self.assertIn("例如 hotreload-20261106-v1 或更新版本", message)
+                    self.assertIn("重新创建场景容器", message)
+                    self.assertIn("git pull 或 docker pull 不会替换正在运行的旧进程", message)
+                    self.assertIn("docs/CONFIG_HOT_RELOAD.md", message)
+                else:
+                    self.assertEqual(message, f"scene1 status 返回 HTTP {status}；检查配置、代次或接口支持情况。")
+
     def test_main_emits_one_json_result_and_public_parameters_precede_command(self):
         options = ["--env-file", str(self.env), "--compose-file", str(self.compose), "--directory", str(self.directory)]
         output = io.StringIO()

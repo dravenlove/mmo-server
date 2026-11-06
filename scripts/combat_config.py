@@ -217,6 +217,15 @@ class DockerRPC:
         try:
             body, code = result.stdout.rsplit(b"\n", 1)
             status = int(code.strip())
+        except (ValueError, TypeError) as error:
+            raise ToolError(f"{service} {operation} 返回无效 HTTP/JSON 响应。") from error
+        if status == 404:
+            raise ToolError(
+                f"{service} {operation} 返回 HTTP 404：当前场景不支持配置管理。"
+                "请核对实际运行镜像是否支持热更（例如 hotreload-20261106-v1 或更新版本）；"
+                "首次启用需升级镜像并重新创建场景容器，git pull 或 docker pull 不会替换正在运行的旧进程。"
+                "详见 docs/CONFIG_HOT_RELOAD.md。")
+        try:
             response = json.loads(body)
         except (ValueError, TypeError) as error:
             raise ToolError(f"{service} {operation} 返回无效 HTTP/JSON 响应。") from error

@@ -110,6 +110,19 @@ sudo python3 scripts/combat_config.py status
 
 `rollback` 把 `previous.json` 作为一次新发布，成功后代次增加。它是**数值回滚**：不会撤销已造成的伤害、治疗、死亡，也不会还原角色剩余 CD。工具只保留一层 `previous.json`；再次回滚会切回刚才的配置。需要保留多个版本时，另行保存配置文件，并用新的、可辨认的版本名发布。
 
+## status 返回 404：先确认运行中的程序
+
+如果 publish 在 `scene1 status` 阶段返回 HTTP 404，当前响应服务未提供配置管理接口；常见情况是源码或镜像已下载，但运行中的容器仍是旧版本。此次操作尚未写入候选配置或切换规则。
+
+在 scene 主机核对计划使用的镜像和实际容器：
+
+```bash
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml config --images
+sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml ps -a
+```
+
+当前目标为 `hotreload-20261106-v1`。若实际容器仍是 `mvp-20261105-mysql` 或旧战斗版，先按[首次升级](#initial-upgrade)完成两台程序更新。`git pull` 更新源码，`docker pull` 下载镜像；正在运行的旧进程需要由 `compose up` 重新创建，单独 `restart` 不会改用新镜像和新环境。先拉取全部镜像，再按 gateway → Backend → scene 的顺序停止；反向启动并检查 healthy 后，先执行 status 成功，再 publish。
+
 ## 完整配置规则
 
 文件必须是至多 64 KiB 的 UTF-8 JSON 对象，禁止重复键、未知字段、未知技能/怪物 ID、缺失字段及 NaN/Infinity。以下字段全部必填；整数项不接受 `18.0` 这样的 JSON 浮点数。可从默认文件复制，修改数值并换一个新 `version`。
