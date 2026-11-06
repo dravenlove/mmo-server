@@ -17,7 +17,7 @@
 
 下文使用可替换的示例地址：`gateway=10.20.0.11`、`scene=10.20.0.22`、`mysql=10.20.0.30:3306`。部署时替换为实际地址；角色名称本身不会创建 DNS 记录。
 
-当前发布版本：`mvp-20261105-mysql`，镜像前缀：`ghcr.io/dravenlove/mmo-server`。两台使用相同版本。现有镜像为 `linux/amd64`，目标机 `uname -m` 应输出 `x86_64`。
+当前发布版本：`combat-20261106-v1`，镜像前缀：`ghcr.io/dravenlove/mmo-server`。两台使用相同版本。现有镜像为 `linux/amd64`，目标机 `uname -m` 应输出 `x86_64`。
 
 两份主机模板已默认使用上述 GHCR 镜像。已有实际 env 会保留原值；更新代码后仍需检查自己的 `MMO_IMAGE_PREFIX` 和 `MMO_IMAGE_TAG`。启动前的 `config --images` 只输出镜像名，应与上述发布版本一致。
 
@@ -117,7 +117,7 @@ chmod 600 deploy/scene-host.env
 ```dotenv
 INTERNAL_TOKEN=
 MMO_IMAGE_PREFIX=ghcr.io/dravenlove/mmo-server
-MMO_IMAGE_TAG=mvp-20261105-mysql
+MMO_IMAGE_TAG=combat-20261106-v1
 SCENE_BIND_IP=10.20.0.22
 TICK_HZ=20
 AOI_RADIUS=30
@@ -151,7 +151,7 @@ chmod 600 deploy/gateway-host.env
 ```dotenv
 INTERNAL_TOKEN=
 MMO_IMAGE_PREFIX=ghcr.io/dravenlove/mmo-server
-MMO_IMAGE_TAG=mvp-20261105-mysql
+MMO_IMAGE_TAG=combat-20261106-v1
 SCENE_HOST_IP=10.20.0.22
 GATEWAY_BIND_IP=10.20.0.11
 BACKEND_DB_DRIVER=mysql
@@ -202,10 +202,10 @@ sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.co
 在 **gateway 主机**运行，不需要在 VPS 编译客户端。`-addr` 使用 gateway 在第 5 步绑定的实际地址：
 
 ```bash
-sudo docker pull ghcr.io/dravenlove/mmo-server/client:mvp-20261105-mysql
+sudo docker pull ghcr.io/dravenlove/mmo-server/client:combat-20261106-v1
 sudo docker run --rm -it --pull never --network host \
   --mount type=volume,source=mmo-client-tokens,target=/app/tokens \
-  ghcr.io/dravenlove/mmo-server/client:mvp-20261105-mysql \
+  ghcr.io/dravenlove/mmo-server/client:combat-20261106-v1 \
   -addr 10.20.0.11:7000 -name deploy-check -token-file /app/tokens/deploy-check.token
 ```
 

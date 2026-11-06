@@ -2,7 +2,7 @@
 
 **首次部署按 [统一部署流程](DEPLOYMENT_TWO_HOSTS.md)顺序执行**。本页补充数据库参数、本机启动选项和存储约束；两台主机分别称为 `gateway` 和 `scene`。
 
-Backend 可通过配置选择 SQLite 或指定的 MySQL，Gateway 和 C++ 场景不直接连接数据库。修改地址、端口、账号或库名后重建 Backend 容器即可，不需要重新编译镜像。此功能需要包含 MySQL 支持的新镜像，例如 `mvp-20261105-mysql`；旧版 `mvp-20261104` 只有 SQLite 支持。
+Backend 可通过配置选择 SQLite 或指定的 MySQL，Gateway 和 C++ 场景不直接连接数据库。修改地址、端口、账号或库名后重建 Backend 容器即可，不需要重新编译镜像。此功能需要包含 MySQL 支持的新镜像，例如 `combat-20261106-v1`；旧版 `mvp-20261104` 只有 SQLite 支持。
 
 ## 1. 数据库准备
 
@@ -41,7 +41,7 @@ MYSQL_TLS=false
 
 ```dotenv
 MMO_IMAGE_PREFIX=ghcr.io/dravenlove/mmo-server
-MMO_IMAGE_TAG=mvp-20261105-mysql
+MMO_IMAGE_TAG=combat-20261106-v1
 ```
 
 配置和密钥只在实际 env 文件保存，不提交 Git，也不作为镜像构建参数。修改 env 后仅 `docker compose restart` 不会更新容器环境；需要执行 `up` 重建容器。
@@ -97,7 +97,7 @@ python scripts/test_mysql.py
 使用已经构建到本机的应用镜像做端到端检查：
 
 ```powershell
-python scripts/smoke_docker.py --tag mvp-20261105-mysql --database mysql
+python scripts/smoke_docker.py --tag combat-20261106-v1 --database mysql
 ```
 
 该脚本使用独立 MySQL 容器与随机项目，验证数据库重启后的 Backend 自动恢复，以及全部容器停止后保留玩家状态。发布工作流在 SQLite 和 MySQL 验收通过后才推送四个镜像。这里的验证不替代你指定数据库的真实网络、账号权限和证书验收。

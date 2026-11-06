@@ -6,12 +6,12 @@
 
 | 镜像 | 部署位置 |
 | --- | --- |
-| `ghcr.io/dravenlove/mmo-server/backend:mvp-20261105-mysql` | `gateway`：Ubuntu |
-| `ghcr.io/dravenlove/mmo-server/gateway:mvp-20261105-mysql` | `gateway`：Ubuntu |
-| `ghcr.io/dravenlove/mmo-server/scene:mvp-20261105-mysql` | `scene`：OpenCloudOS；两个场景共用 |
-| `ghcr.io/dravenlove/mmo-server/client:mvp-20261105-mysql` | 可选验收客户端 |
+| `ghcr.io/dravenlove/mmo-server/backend:combat-20261106-v1` | `gateway`：Ubuntu |
+| `ghcr.io/dravenlove/mmo-server/gateway:combat-20261106-v1` | `gateway`：Ubuntu |
+| `ghcr.io/dravenlove/mmo-server/scene:combat-20261106-v1` | `scene`：OpenCloudOS；两个场景共用 |
+| `ghcr.io/dravenlove/mmo-server/client:combat-20261106-v1` | 可选验收客户端 |
 
-上述 `mvp-20261105-mysql` 标签已经 [发布成功](https://github.com/dravenlove/mmo-server/actions/runs/41954041853)，四个镜像已通过匿名拉取检查。新的应用版本使用新标签，或使用工作流默认生成的 `sha-提交号`；两台部署同一版本。
+上述 `combat-20261106-v1` 标签已经 [发布成功](https://github.com/dravenlove/mmo-server/actions/runs/42177116107)，四个镜像已通过匿名拉取检查。新的应用版本使用新标签，或使用工作流默认生成的 `sha-提交号`；两台部署同一版本。
 
 ## 1. 发布镜像
 

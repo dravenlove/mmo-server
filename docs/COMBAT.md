@@ -32,7 +32,7 @@
 
 ## 3. 两台 VPS 更新
 
-本次应用镜像标签为 `combat-20261106-v1`，前缀仍为 `ghcr.io/dravenlove/mmo-server`。以对应 GitHub Actions 发布成功和实际拉取成功为准。
+本次应用镜像标签为 `combat-20261106-v1`，前缀仍为 `ghcr.io/dravenlove/mmo-server`。[GitHub Actions 发布](https://github.com/dravenlove/mmo-server/actions/runs/42177116107)已成功，四个镜像均已验证匿名拉取，部署主机无需登录 GitHub。两台实际下载和连通性仍以各自拉取与业务验收为准。
 
 先备份当前 MySQL 数据，并记录两台原镜像标签。两台都更新源码，保留实际 env 中的内部密钥、数据库账号、地址和卷名：
 

@@ -21,6 +21,10 @@
 
 报告位于 `output/combat-check-6a6a940f2d/report.json`、`output/mmo-mysql-test-c006705de2/report.json`、`output/mmo-check-cdc72861/report.json`（SQLite）、`output/mmo-check-59d177f9/report.json`（MySQL）、`output/desktop-check-20261106-094427-a7fde1/report.json` 和 `packaged-combat-report.json`。所有运行使用隔离端口、测试库、随机密钥和测试角色；自建服务、容器及测试卷已清理。最终 exe 已渲染截图复核，但这不代替用户用物理键鼠进行完整游玩。
 
+最终战斗 exe 另对用户提供的真实公网 gateway 完成未登录协议 ping，样本约 58ms，未注册账号、登录或修改真实玩家数据。实际地址仅保存在被忽略的本机配置和报告中。
+
+战斗版 [GitHub 发布运行 42177116107](https://github.com/dravenlove/mmo-server/actions/runs/42177116107) 已成功，镜像源码提交为 `a49eb62`。工作流重新构建四个镜像，完成 SQLite 18 项和 MySQL 19 项容器检查、MySQL Backend 集成检查后推送到 `ghcr.io/dravenlove/mmo-server/*:combat-20261106-v1`。随后以全新空认证 Docker 配置完成四个镜像的匿名拉取，并核对 `linux/amd64` 与源码提交标签，4/4 通过；报告为 `output/anonymous-pull-combat-20261106/report.json`。两台主机模板随后改为新标签，默认/GHCR、本地与自定义仓库配合 SQLite/MySQL，共 12 组 Compose 展开通过，保留原持久卷名，数据库密码仅进入 Backend。此配置检查未启动真实部署；报告为 `output/combat-release-config-check/report.json`。
+
 这些战斗结果来自本机独立进程和同一 Docker 引擎，不代表真实两台 VPS 已更新或公网战斗已验收。未做并发容量、长时间稳定性或真实跨机故障演练。场景每约 2 秒保存检查点，成功施法/复活与正常断开也尽力保存；硬故障仍可能回退最近检查点之后的变化。技能没有新增持久金币或经验结算，不能将这套快照当成逐技能的持久事务。升级步骤见 [战斗说明](COMBAT.md)。
 
 ## 既有基线记录
