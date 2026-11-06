@@ -2,7 +2,7 @@
 
 本轮可在玩家保持连接时修改技能和怪物数值。C++ 场景在 Tick 命令队列内校验并整体切换配置；不重启容器、不重新登录，也不清空角色状态。它适合测试平衡参数，不包含 Lua、C++ 代码替换、增加技能 ID、改变技能行为或修改玩家生命/法力上限。
 
-完整示例：[默认配置](../configs/combat.default.json)、[Demo 配置](../configs/combat.demo.json)。本轮目标镜像标签为 `hotreload-20261106-v1`，镜像前缀为 `ghcr.io/dravenlove/mmo-server`；当前仍待发布工作流完成。升级前先核对 [验证与发布记录](VALIDATION.md)，确认该标签已发布且可拉取。已执行测试及真实 VPS 的验收范围也以该记录为准。
+完整示例：[默认配置](../configs/combat.default.json)、[Demo 配置](../configs/combat.demo.json)。镜像标签为 `hotreload-20261106-v1`，前缀为 `ghcr.io/dravenlove/mmo-server`。[发布运行 42187148036](https://github.com/dravenlove/mmo-server/actions/runs/42187148036) 已成功，四个镜像已通过匿名拉取检查，无需在 VPS 登录 GitHub。测试及真实 VPS 的验收范围见 [验证记录](VALIDATION.md)。
 
 <a id="initial-upgrade"></a>
 

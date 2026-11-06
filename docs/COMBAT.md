@@ -35,7 +35,7 @@
 
 ## 3. 两台 VPS 更新与数值 Demo
 
-本轮目标标签为 `hotreload-20261106-v1`，镜像前缀仍为 `ghcr.io/dravenlove/mmo-server`；当前待发布工作流成功，升级前核对 [验证与发布记录](VALIDATION.md)。旧 `combat-20261106-v1` 发布证明作为历史记录保留，不代表新标签已发布。
+当前标签为 `hotreload-20261106-v1`，镜像前缀为 `ghcr.io/dravenlove/mmo-server`。[发布工作流](https://github.com/dravenlove/mmo-server/actions/runs/42187148036) 已成功，四个镜像通过匿名拉取验证。镜像源码提交为 `a1023d9`；完整范围见 [验证记录](VALIDATION.md)。
 
 首次升级按 [数值热更部署流程](CONFIG_HOT_RELOAD.md#initial-upgrade)完成一次维护：两台更新源码和实际 env，scene 主机运行 `sudo python3 scripts/combat_config.py init`，使用只读目录挂载固定配置；全部镜像拉取成功后，先停 gateway、Backend，再停 scene，先启动 scene 并等健康，再恢复 gateway 项目。保留原数据库、密钥和持久卷，Backend 仍只运行一个实例。
 

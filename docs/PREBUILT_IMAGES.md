@@ -31,7 +31,7 @@ docker info --format '{{.OSType}}'
 在项目根目录的 PowerShell 执行。下面的版本号是示例，新版本使用新的标签；脚本会拒绝覆盖已完成的同名包：
 
 ```powershell
-python scripts/package_images.py --tag combat-20261106-v1 --platform linux/amd64 --debian-mirror mirrors.ustc.edu.cn
+python scripts/package_images.py --tag hotreload-20261106-v1 --platform linux/amd64 --debian-mirror mirrors.ustc.edu.cn
 ```
 
 镜像源按构建机实际网络选择；官方源可省略 `--debian-mirror`。Go 模块访问慢时可指定 `--goproxy`。脚本不依赖任何实际 `.env` 文件，不需要 VPS 地址或内部密钥。它会依次构建四个镜像，检查镜像已加载到当前 Docker 引擎，并核对目标架构后导出压缩包。
@@ -41,7 +41,7 @@ python scripts/package_images.py --tag combat-20261106-v1 --platform linux/amd64
 ```powershell
 $env:HTTP_PROXY = 'http://127.0.0.1:10809'
 $env:HTTPS_PROXY = 'http://127.0.0.1:10809'
-python scripts/package_images.py --tag combat-20261106-v1 --platform linux/amd64 --debian-mirror mirrors.ustc.edu.cn
+python scripts/package_images.py --tag hotreload-20261106-v1 --platform linux/amd64 --debian-mirror mirrors.ustc.edu.cn
 ```
 
 这里的 `HTTPS_PROXY` 也使用 `http://`，表示通过 HTTP 代理建立 HTTPS 隧道。变量仅作用于当前终端及它启动的进程，不需要放进 VPS 的 env 文件。Docker Desktop 的镜像下载代理与构建工具的认证请求都需可达，具体设置见 [Docker 代理说明](https://docs.docker.com/desktop/settings-and-maintenance/settings/#proxies)。
@@ -51,7 +51,7 @@ python scripts/package_images.py --tag combat-20261106-v1 --platform linux/amd64
 输出目录：
 
 ```text
-dist/docker/combat-20261106-v1-linux-amd64/
+dist/docker/hotreload-20261106-v1-linux-amd64/
   mmo-gateway.tar.gz
   mmo-gateway.tar.gz.sha256
   mmo-scene.tar.gz
@@ -75,7 +75,7 @@ dist/docker/combat-20261106-v1-linux-amd64/
 cd ~/mmo-images
 sha256sum -c mmo-gateway.tar.gz.sha256
 sudo docker load -i mmo-gateway.tar.gz
-sudo docker image inspect mmo/backend:combat-20261106-v1 mmo/gateway:combat-20261106-v1 mmo/client:combat-20261106-v1 --format '{{json .RepoTags}} {{.Os}}/{{.Architecture}}'
+sudo docker image inspect mmo/backend:hotreload-20261106-v1 mmo/gateway:hotreload-20261106-v1 mmo/client:hotreload-20261106-v1 --format '{{json .RepoTags}} {{.Os}}/{{.Architecture}}'
 ```
 
 **OpenCloudOS：**
@@ -84,7 +84,7 @@ sudo docker image inspect mmo/backend:combat-20261106-v1 mmo/gateway:combat-2026
 cd ~/mmo-images
 sha256sum -c mmo-scene.tar.gz.sha256
 sudo docker load -i mmo-scene.tar.gz
-sudo docker image inspect mmo/scene:combat-20261106-v1 --format '{{json .RepoTags}} {{.Os}}/{{.Architecture}}'
+sudo docker image inspect mmo/scene:hotreload-20261106-v1 --format '{{json .RepoTags}} {{.Os}}/{{.Architecture}}'
 ```
 
 只有校验成功才加载；加载成功后再检查镜像标签。加载与启动使用同一个 Docker 引擎，不混用指向不同引擎的用户/context。
@@ -95,7 +95,7 @@ sudo docker image inspect mmo/scene:combat-20261106-v1 --format '{{json .RepoTag
 
 ```dotenv
 MMO_IMAGE_PREFIX=mmo
-MMO_IMAGE_TAG=combat-20261106-v1
+MMO_IMAGE_TAG=hotreload-20261106-v1
 ```
 
 离线包中的镜像名以 `mmo/` 开头，因此这里使用 `MMO_IMAGE_PREFIX=mmo`；若选择 [网上镜像拉取](REGISTRY_DEPLOYMENT.md)，改用对应的仓库前缀。
@@ -141,7 +141,7 @@ curl --fail http://127.0.0.1:8080/readyz
 ```bash
 sudo docker run --rm -it --pull never --network host \
   --mount type=volume,source=mmo-client-tokens,target=/app/tokens \
-  mmo/client:combat-20261106-v1 -addr 127.0.0.1:7000 -name alice -token-file /app/tokens/alice.token
+  mmo/client:hotreload-20261106-v1 -addr 127.0.0.1:7000 -name alice -token-file /app/tokens/alice.token
 ```
 
 网关未监听回环地址时，将 `-addr` 改为 `gateway` 的实际绑定地址。TLS 入口再使用证书对应的域名及客户端 TLS 参数。
