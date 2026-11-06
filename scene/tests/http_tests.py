@@ -19,6 +19,7 @@ def main():
     token = secrets.token_hex(32)
     env = dict(os.environ, INTERNAL_TOKEN=token, SCENE_ID="http-test",
                SCENE_HOST="127.0.0.1", SCENE_PORT=str(port))
+    env.pop("COMBAT_CONFIG_FILE", None)
     process = subprocess.Popen([str(Path(sys.argv[1]).resolve())], env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     base = f"http://127.0.0.1:{port}"

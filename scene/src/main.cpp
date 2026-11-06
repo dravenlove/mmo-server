@@ -8,10 +8,13 @@
 #include <cstdlib>
 #include <deque>
 #include <future>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <thread>
+#include <vector>
 
 namespace {
 volatile std::sig_atomic_t interrupted = 0;
@@ -45,6 +48,38 @@ bool token_matches(const std::string& actual, const std::string& expected) {
     for (std::size_t i = 0; i < expected.size(); ++i)
         different |= static_cast<unsigned char>(actual[i] ^ expected[i]);
     return different == 0;
+}
+
+mmo::Json strict_json(const std::string& text) {
+    std::vector<std::set<std::string>> objects;
+    bool invalid = false;
+    try {
+        auto parsed = mmo::Json::parse(text, [&](int depth, mmo::Json::parse_event_t event, mmo::Json& value) {
+            if (depth > 16) invalid = true;
+            if (event == mmo::Json::parse_event_t::object_start) objects.emplace_back();
+            else if (event == mmo::Json::parse_event_t::key && !objects.back().insert(value.get<std::string>()).second)
+                invalid = true;
+            else if (event == mmo::Json::parse_event_t::object_end) objects.pop_back();
+            return true;
+        });
+        if (invalid || !parsed.is_object()) throw mmo::Error(400, "JSON object without duplicate keys required");
+        return parsed;
+    } catch (const mmo::Json::exception&) {
+        throw mmo::Error(400, "valid finite JSON object required");
+    }
+}
+
+mmo::Json read_combat_config(const std::string& path) {
+    if (path.empty()) throw mmo::Error(409, "COMBAT_CONFIG_FILE is not configured");
+    std::ifstream input(path, std::ios::binary);
+    if (!input) throw mmo::Error(400, "cannot open COMBAT_CONFIG_FILE");
+    std::string bytes(64 * 1024 + 1, '\0');
+    input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    const auto size = input.gcount();
+    if (size > 64 * 1024) throw mmo::Error(400, "COMBAT_CONFIG_FILE exceeds 64KiB");
+    if (input.bad() || (input.fail() && !input.eof())) throw mmo::Error(400, "cannot read COMBAT_CONFIG_FILE");
+    bytes.resize(static_cast<std::size_t>(size));
+    return strict_json(bytes);
 }
 
 struct Result { int status; mmo::Json body; };
@@ -137,7 +172,7 @@ void reply(httplib::Response& response, int status, const mmo::Json& body) {
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "--help") {
-        std::cout << "scene-server: configure INTERNAL_TOKEN, SCENE_ID, SCENE_HOST, SCENE_PORT, TICK_HZ, AOI_RADIUS, MOVE_SPEED\n";
+        std::cout << "scene-server: configure INTERNAL_TOKEN, SCENE_ID, SCENE_HOST, SCENE_PORT, TICK_HZ, AOI_RADIUS, MOVE_SPEED, COMBAT_CONFIG_FILE\n";
         return 0;
     }
     try {
@@ -149,6 +184,8 @@ int main(int argc, char** argv) {
         config.tick_hz = integer_env("TICK_HZ", "20", 1, 120);
         config.aoi_radius = number_env("AOI_RADIUS", "30", 1, 1000);
         config.move_speed = number_env("MOVE_SPEED", "6", 0.01, 100);
+        const auto combat_config_path = environment("COMBAT_CONFIG_FILE", "");
+        if (!combat_config_path.empty()) config.combat_config = read_combat_config(combat_config_path);
         const auto host = environment("SCENE_HOST", "127.0.0.1");
         const auto port = integer_env("SCENE_PORT", "9001", 1, 65535);
 
@@ -175,19 +212,25 @@ int main(int argc, char** argv) {
             reply(response, 200, runtime.health());
         });
 
-        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/view", "/v1/cast", "/v1/revive", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove"}) {
+        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/view", "/v1/cast", "/v1/revive", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove",
+                "/v1/config/status", "/v1/config/reload", "/v1/config/apply", "/v1/config/validate"}) {
             server.Post(path, [&, path](const httplib::Request& request, httplib::Response& response) {
                 if (!token_matches(request.get_header_value("X-Internal-Token"), token)) {
                     reply(response, 401, {{"error", "invalid internal token"}});
                     return;
                 }
-                auto body = mmo::Json::parse(request.body, nullptr, false);
-                if (body.is_discarded() || !body.is_object()) {
-                    reply(response, 400, {{"error", "valid JSON object required"}});
-                    return;
+                try {
+                    auto body = strict_json(request.body);
+                    if (std::string(path) == "/v1/config/reload") {
+                        for (auto it = body.begin(); it != body.end(); ++it)
+                            if (it.key() != "expected_generation") throw mmo::Error(400, "reload only accepts expected_generation");
+                        body["config"] = read_combat_config(combat_config_path);
+                    }
+                    auto result = runtime.submit(path, std::move(body));
+                    reply(response, result.status, result.body);
+                } catch (const mmo::Error& error) {
+                    reply(response, error.status, {{"error", error.what()}});
                 }
-                auto result = runtime.submit(path, std::move(body));
-                reply(response, result.status, result.body);
             });
         }
         server.set_error_handler([](const httplib::Request&, httplib::Response& response) {

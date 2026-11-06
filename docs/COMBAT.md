@@ -6,6 +6,8 @@
 
 登录后，地图里能看到狼和精英守卫。点击活着的怪物选中目标；点击场景区域后使用 WASD / 方向键移动，数字键 1～4 释放技能，也可以点技能栏。Tab 切换可见目标。
 
+下表是 `default-v1` 默认数值。启用 [数值热更](CONFIG_HOT_RELOAD.md) 后，以服务端当前技能目录和客户端提示为准；技能名称、目标类型及行为保持不变。
+
 | 按键 | 技能 | 效果 | 距离 / 范围 | 消耗 | 冷却 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 斩击 | 对选中怪物造成 18 点伤害 | 3.2 | 0 | 0.6 秒 |
@@ -15,7 +17,7 @@
 
 角色生命上限为 180，法力上限为 100。处于激活状态且存活的角色随场景逻辑时间每秒恢复 6 法力。界面的冷却倒计时是显示提示，能否施放仍由服务器决定；超出距离、缺少目标、法力不足、冷却未结束或角色死亡时会拒绝操作。
 
-两个场景各有三只狼和一个精英。怪物受到攻击后追击并反击，脱战后回巢并恢复生命，死亡后约 8 秒刷新。它们不主动袭击未参与战斗的测试角色。角色死亡后不能移动或施法，等待约 5 秒后可点击复活回到原点，恢复全部生命和法力，但不会清空剩余技能冷却。
+两个场景各有三只狼和一个精英。怪物受到攻击后追击并反击，脱战后回巢并恢复生命，默认死亡后约 8 秒刷新。它们不主动袭击未参与战斗的测试角色。怪物生命、伤害、速度、攻击间隔及刷新等待支持配置；当前怪物仅在下次刷新或脱战重置时整体采用新数值，不因配置发布回血，死亡等待沿用其持有版本。角色死亡后不能移动或施法，等待约 5 秒后可点击复活回到原点，恢复全部生命和法力，但不会清空剩余技能冷却。
 
 这一版是战斗试炼场，怪物不发放金币或经验；原有一次性欢迎奖励仍由 Backend 的数据库事务处理。这里没有新增装备、等级和任务系统。
 
@@ -27,39 +29,19 @@
 - Backend 新建 `combat_snapshots` 表，保存归属与会话校验后的战斗快照；旧账号、金币、领取记录和迁移表保留。SQLite 和 MySQL 均使用新增表，不要求手工 ALTER 旧表。
 - 正常检查点约每 2 秒一次，正常断开也会尝试保存。进程故障恢复可能回退最近一次检查点之后的战斗变化，不能把它当作逐次技能的持久化事务。
 - 冷却以剩余逻辑时间保存；恢复时保守继承剩余冷却。怪物、仇恨和战斗事件属于场景内存，场景重启会重新生成怪物。
+- 数值热更保留现有 HP/MP、剩余 CD、动作序号及成功动作缓存；新施法使用新参数。新版快照校验允许每项 CD 为 0～600000 毫秒，缩短当前技能 CD 不会截断旧剩余时间。旧战斗二进制未必能读取新版产生的更长 CD，不能无条件回退应用镜像。
 
 施法和复活使用同一会话内的单调动作序号。重复已成功动作不会重复结算；当前进程最近一次成功动作的相同序号、相同内容可返回缓存结果，更旧或内容冲突的序号会被拒绝。动作结果缓存不随迁移或检查点保存；目标场景或重启进程恢复后，会保留动作序号高水位并拒绝旧动作，不能借重试重复结算。网络超时后不要换一个新序号自动重发同一次技能。
 
-## 3. 两台 VPS 更新
+## 3. 两台 VPS 更新与数值 Demo
 
-本次应用镜像标签为 `combat-20261106-v1`，前缀仍为 `ghcr.io/dravenlove/mmo-server`。[GitHub Actions 发布](https://github.com/dravenlove/mmo-server/actions/runs/42177116107)已成功，四个镜像均已验证匿名拉取，部署主机无需登录 GitHub。两台实际下载和连通性仍以各自拉取与业务验收为准。
+本轮目标标签为 `hotreload-20261106-v1`，镜像前缀仍为 `ghcr.io/dravenlove/mmo-server`；当前待发布工作流成功，升级前核对 [验证与发布记录](VALIDATION.md)。旧 `combat-20261106-v1` 发布证明作为历史记录保留，不代表新标签已发布。
 
-先备份当前 MySQL 数据，并记录两台原镜像标签。两台都更新源码，保留实际 env 中的内部密钥、数据库账号、地址和卷名：
+首次升级按 [数值热更部署流程](CONFIG_HOT_RELOAD.md#initial-upgrade)完成一次维护：两台更新源码和实际 env，scene 主机运行 `sudo python3 scripts/combat_config.py init`，使用只读目录挂载固定配置；全部镜像拉取成功后，先停 gateway、Backend，再停 scene，先启动 scene 并等健康，再恢复 gateway 项目。保留原数据库、密钥和持久卷，Backend 仍只运行一个实例。
 
-```bash
-cd ~/mmo-server
-git pull --ff-only
-```
+之后玩家保持连接，在 scene 主机执行 `sudo python3 scripts/combat_config.py publish configs/combat.demo.json`，即可观察 `default-v1` → `demo-v2`、新一次斩击 18 → 36，以及四种技能提示更新。狼的 120 最大生命仅在下次刷新或脱战重置后出现。用工具 `rollback` 回切数值不会撤销已经造成的伤害。完整命令、参数上下限、两场景依次发布及失败恢复边界见 [热更说明](CONFIG_HOT_RELOAD.md)。
 
-编辑两台各自的 env，把 `MMO_IMAGE_TAG` 改为 `combat-20261106-v1`。已有 env 不会跟随模板自动更改。
-
-scene 提前拉取：
-
-```bash
-sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml config --images
-sudo docker compose --env-file deploy/scene-host.env -f deploy/scene-host.compose.yaml pull --policy always scene1
-```
-
-gateway 提前拉取：
-
-```bash
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml config --images
-sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.compose.yaml pull --policy always backend gateway
-```
-
-两台都拉取成功后，按 [维护停止与恢复顺序](DEPLOYMENT_TWO_HOSTS.md#operations)更新：先停 gateway 入口、Backend，再停 scene；先启动 scene 并等健康，再启动 gateway。保留原数据库和持久卷，Backend 仍只运行一个实例。
-
-新客户端连接旧服务端仍可做基础联调，但旧服务端不提供战斗数据。需要两台应用服务和桌面客户端都更新，才能完整验收技能。
+需要更新桌面客户端才能看到配置版本与实时技能提示。旧服务端不提供新配置元数据；旧服务端与新客户端组合只能用于已有协议支持的基础联调。
 
 ## 4. 战斗验收
 
@@ -76,14 +58,15 @@ sudo docker compose --env-file deploy/gateway-host.env -f deploy/gateway-host.co
 ```powershell
 .\scripts\build.ps1
 python scripts/smoke_combat.py
+python scripts/smoke_combat.py --hot-reload
 python scripts/test_desktop.py
 ```
 
 已有新镜像时，还可对 SQLite / MySQL 两种模式做容器验收：
 
 ```powershell
-python scripts/smoke_docker.py --tag combat-20261106-v1 --combat
-python scripts/smoke_docker.py --tag combat-20261106-v1 --database mysql --combat
+python scripts/smoke_docker.py --image-prefix ghcr.io/dravenlove/mmo-server --tag hotreload-20261106-v1 --hot-reload
+python scripts/smoke_docker.py --image-prefix ghcr.io/dravenlove/mmo-server --tag hotreload-20261106-v1 --database mysql --hot-reload
 ```
 
 这些脚本使用独立回环端口、随机密钥和测试库，不连接实际部署。已执行的结果以 [验证记录](VALIDATION.md)为准。

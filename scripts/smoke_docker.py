@@ -21,7 +21,9 @@ parser.add_argument('--image-prefix', default='mmo')
 parser.add_argument('--database', choices=('sqlite', 'mysql'), default='sqlite')
 parser.add_argument('--mysql-image', default='mysql:8.0', help='隔离测试使用的本地 MySQL 镜像')
 parser.add_argument('--combat', action='store_true', help='额外验收战斗、技能、死亡复活与战斗快照恢复')
+parser.add_argument('--hot-reload', action='store_true', help='额外验收在线配置热更、管理CLI与回滚；包含战斗检查')
 args = parser.parse_args()
+args.combat = args.combat or args.hot_reload
 TAG = args.tag
 PREFIX = args.image_prefix.rstrip('/')
 if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}', TAG):
@@ -36,6 +38,15 @@ envfile = work / 'test.env'
 envfile.write_text(f'INTERNAL_TOKEN={token}\nMMO_IMAGE_TAG={TAG}\nMMO_IMAGE_PREFIX={PREFIX}\nTLS_CERT_FILE=\nTLS_KEY_FILE=\n', encoding='utf-8')
 child_env = dict(os.environ, INTERNAL_TOKEN=token, MMO_IMAGE_TAG=TAG,
                  MMO_IMAGE_PREFIX=PREFIX, TLS_CERT_FILE='', TLS_KEY_FILE='')
+hot_directory = work / 'combat-config'
+if args.hot_reload:
+    hot_directory.mkdir(mode=0o755)
+    os.chmod(hot_directory, 0o755)
+    active_rules = hot_directory / 'current.json'
+    active_rules.write_bytes((ROOT / 'configs/combat.default.json').read_bytes())
+    os.chmod(active_rules, 0o644)
+    with envfile.open('a', encoding='utf-8') as stream:
+        stream.write(f'COMBAT_CONFIG_DIR={hot_directory.as_posix()}\nCOMBAT_CONFIG_FILE=/app/config/current.json\n')
 peers, checks = [], []
 ports = {name: free_port() for name in ('backend', 'gateway', 'health', 'scene1', 'scene2')}
 assert len(set(ports.values())) == len(ports)
@@ -58,6 +69,9 @@ for name, service in config['services'].items():
     service.pop('build', None)
     service['ports'] = [{'target': target, 'published': str(ports[port]),
                          'host_ip': '127.0.0.1', 'protocol': 'tcp'} for target, port in mapping[name]]
+    if args.hot_reload and name in ('scene1', 'scene2'):
+        service['environment']['COMBAT_CONFIG_FILE'] = '/app/config/current.json'
+        service['volumes'] = [{'type': 'bind', 'source': str(hot_directory), 'target': '/app/config', 'read_only': True}]
 config['services']['gateway'].pop('volumes', None)
 config['volumes']['backend-data']['name'] = project + '-data'
 config['networks']['default']['name'] = project + '-net'
@@ -188,6 +202,27 @@ try:
         assert exercised['cast'][0]['accepted'] and exercised['view'][0]['self']['combat']['cooldowns']['charge'] > 0
         saved = exercised['view'][0]['self']
         passed('container CLI casts skills and reads authoritative combat state')
+    if args.hot_reload:
+        from hot_reload_checks import run_checks as hot_checks
+
+        def config_admin(scene, operation, body, authenticated=True):
+            return http(f'http://127.0.0.1:{ports[scene]}/v1/config/{operation}', body, token if authenticated else None)
+
+        def config_tool(command, value=None):
+            arguments = [sys.executable, 'scripts/combat_config.py', '--env-file', str(envfile),
+                         '--compose-file', str(cfg), '--directory', str(hot_directory), '--project-name', project, command]
+            if value is not None:
+                source = work / 'candidate.json'
+                source.write_text(json.dumps(value, indent=2) + '\n', encoding='utf-8')
+                arguments.append(str(source))
+            result = run(arguments, timeout=120)
+            with (work / 'config-tool.log').open('a', encoding='utf-8') as stream:
+                stream.write(result.stdout + result.stderr)
+            assert result.returncode == 0, result.stdout + result.stderr
+            return json.loads(result.stdout)
+
+        hot_checks(new_peer, passed, config_admin, lambda value: config_tool('publish', value),
+                   lambda: config_tool('rollback'), combat_checkpoint, combat_restart)
     close_peers()
     time.sleep(2.5)
     if args.database == 'mysql':
@@ -222,7 +257,7 @@ try:
     names = compose_ok('ps', '-q').stdout.split()
     stats = run(['docker', 'stats', '--no-stream', '--format', '{{json .}}', *names])
     (work / 'stats.jsonl').write_text(stats.stdout, encoding='utf-8')
-    report = {'ok': True, 'image_tag': TAG, 'image_prefix': PREFIX, 'database': args.database, 'combat': args.combat, 'checks': checks, 'count': len(checks),
+    report = {'ok': True, 'image_tag': TAG, 'image_prefix': PREFIX, 'database': args.database, 'combat': args.combat, 'hot_reload': args.hot_reload, 'checks': checks, 'count': len(checks),
               'scope': 'Linux containers on one Docker engine; no real VPS network, TLS or capacity test'}
     (work / 'report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(f'PASS {len(checks)} Docker checks; report: {work / "report.json"}', flush=True)

@@ -42,7 +42,7 @@ def main():
 
     common = dict(os.environ, INTERNAL_TOKEN=secrets.token_hex(32))
     # 明确覆盖运行模式，避免继承开发机上的任何真实数据库或 TLS 配置。
-    common.update(BACKEND_DB_DRIVER="sqlite", TLS_CERT_FILE="", TLS_KEY_FILE="")
+    common.update(BACKEND_DB_DRIVER="sqlite", TLS_CERT_FILE="", TLS_KEY_FILE="", COMBAT_CONFIG_FILE="")
     for name in tuple(common):
         if name.startswith("MYSQL_"):
             common.pop(name)

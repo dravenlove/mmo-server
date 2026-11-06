@@ -149,7 +149,8 @@ public sealed record CombatEvent(long Id, string Type, string SourceId, string T
 
 public sealed record WorldView(Role Self, IReadOnlyList<Role> Players, ulong Tick, string SceneId,
     IReadOnlyList<Mob>? Mobs = null, IReadOnlyList<SkillDefinition>? Skills = null, IReadOnlyList<CombatEvent>? Events = null,
-    bool PlayersTruncated = false, int VisiblePlayerCount = 0)
+    bool PlayersTruncated = false, int VisiblePlayerCount = 0,
+    string ConfigVersion = "", ulong ConfigGeneration = 0, ulong ConfigAppliedTick = 0)
 {
     public static WorldView FromJson(JsonElement data) => new(
         Role.FromJson(data.GetProperty("self")),
@@ -160,7 +161,10 @@ public sealed record WorldView(Role Self, IReadOnlyList<Role> Players, ulong Tic
         data.TryGetProperty("skills", out var skills) ? skills.EnumerateArray().Select(SkillDefinition.FromJson).ToArray() : [],
         data.TryGetProperty("events", out var events) ? events.EnumerateArray().Select(CombatEvent.FromJson).ToArray() : [],
         data.TryGetProperty("players_truncated", out var truncated) && truncated.GetBoolean(),
-        data.TryGetProperty("visible_player_count", out var visible) ? visible.GetInt32() : data.GetProperty("players").GetArrayLength());
+        data.TryGetProperty("visible_player_count", out var visible) ? visible.GetInt32() : data.GetProperty("players").GetArrayLength(),
+        data.TryGetProperty("config_version", out var version) ? version.GetString() ?? "" : "",
+        data.TryGetProperty("config_generation", out var generation) ? generation.GetUInt64() : 0,
+        data.TryGetProperty("config_applied_tick", out var appliedTick) ? appliedTick.GetUInt64() : 0);
 }
 
 public sealed record SavedCredential(string Token, string RoleId)

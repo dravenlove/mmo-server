@@ -45,6 +45,9 @@ type View struct {
 	Events             json.RawMessage `json:"events,omitempty"`
 	PlayersTruncated   bool            `json:"players_truncated,omitempty"`
 	VisiblePlayerCount int             `json:"visible_player_count,omitempty"`
+	ConfigVersion      string          `json:"config_version,omitempty"`
+	ConfigGeneration   uint64          `json:"config_generation,omitempty"`
+	ConfigAppliedTick  uint64          `json:"config_applied_tick,omitempty"`
 }
 type Request struct {
 	ID        string  `json:"id"`

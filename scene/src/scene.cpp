@@ -70,6 +70,81 @@ const std::array<Skill, 4> skills{{
     {"mend", "战意恢复", "恢复自身生命。", 0, 12, 25, 0, 45, "self"}
 }};
 
+void exact_keys(const Json& value, std::initializer_list<const char*> keys) {
+    if (!value.is_object() || value.size() != keys.size()) throw Error(400, "unexpected config fields");
+    for (auto key : keys) if (!value.contains(key)) throw Error(400, std::string("missing config field: ") + key);
+}
+
+std::int64_t config_integer(const Json& value, const char* key, std::int64_t low, std::int64_t high) {
+    auto number = integer_field(value, key, true);
+    if (number < low || number > high) throw Error(400, std::string("config value out of range: ") + key);
+    return number;
+}
+
+double config_real(const Json& value, const char* key, double low, double high) {
+    auto number = real_field(value, key, high);
+    if (number < low) throw Error(400, std::string("config value out of range: ") + key);
+    return number;
+}
+
+Json default_combat_config() {
+    Json defaults{{"schema_version", 1}, {"version", "default-v1"}, {"skills", Json::object()},
+        {"monsters", {
+            {"wolf", {{"max_hp", 80}, {"damage", 8}, {"move_speed", 3.2}, {"attack_interval_ms", 1300}, {"respawn_ms", 8000}}},
+            {"elite", {{"max_hp", 240}, {"damage", 14}, {"move_speed", 2.4}, {"attack_interval_ms", 1800}, {"respawn_ms", 8000}}}
+        }}};
+    for (const auto& skill : skills) defaults["skills"][skill.id] = {
+        {"damage", skill.damage}, {"heal", skill.heal}, {"mp_cost", skill.mp_cost},
+        {"range", skill.range}, {"cooldown_ms", milliseconds(skill.cooldown)}};
+    return defaults;
+}
+
+Json validate_config(const Json& value) {
+    if (value.dump().size() > 64 * 1024) throw Error(400, "combat config exceeds 64KiB");
+    exact_keys(value, {"schema_version", "version", "skills", "monsters"});
+    config_integer(value, "schema_version", 1, 1);
+    const auto version = string_field(value, "version", 64);
+    for (unsigned char character : version)
+        if (!((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+              (character >= '0' && character <= '9') || character == '.' || character == '_' || character == '-'))
+            throw Error(400, "invalid config version");
+    exact_keys(value["skills"], {"strike", "whirlwind", "charge", "mend"});
+    for (const auto& skill : skills) {
+        const auto& entry = value["skills"][skill.id];
+        exact_keys(entry, {"damage", "heal", "mp_cost", "range", "cooldown_ms"});
+        config_integer(entry, "damage", 0, 10000);
+        config_integer(entry, "heal", 0, 180);
+        config_integer(entry, "mp_cost", 0, 100);
+        config_real(entry, "range", 0, 100);
+        config_integer(entry, "cooldown_ms", 0, 600000);
+        if (std::string(skill.id) == "mend") {
+            if (entry["damage"] != 0 || entry["range"].get<double>() != 0)
+                throw Error(400, "mend has fixed healing behavior");
+        } else if (entry["heal"] != 0) throw Error(400, "attack skills have fixed damage behavior");
+    }
+    exact_keys(value["monsters"], {"wolf", "elite"});
+    for (const auto& entry : value["monsters"]) {
+        exact_keys(entry, {"max_hp", "damage", "move_speed", "attack_interval_ms", "respawn_ms"});
+        config_integer(entry, "max_hp", 1, 1000000);
+        config_integer(entry, "damage", 0, 180);
+        config_real(entry, "move_speed", 0.01, 100);
+        config_integer(entry, "attack_interval_ms", 100, 600000);
+        config_integer(entry, "respawn_ms", 1000, 600000);
+    }
+    return value;
+}
+
+Skill configured_skill(const Skill& metadata, const Json& config) {
+    auto skill = metadata;
+    const auto& entry = config["skills"][skill.id];
+    skill.damage = entry["damage"].get<int>();
+    skill.heal = entry["heal"].get<int>();
+    skill.mp_cost = entry["mp_cost"].get<int>();
+    skill.range = entry["range"].get<double>();
+    skill.cooldown = entry["cooldown_ms"].get<double>() / 1000;
+    return skill;
+}
+
 Role::Combat parse_combat(const Json& value, std::int64_t session) {
     Role::Combat combat;
     combat.action_session = session;
@@ -97,7 +172,8 @@ Role::Combat parse_combat(const Json& value, std::int64_t session) {
     if (!value.contains("cooldowns") || !value["cooldowns"].is_object()) throw Error(400, "invalid cooldown snapshot");
     for (const auto& skill : skills) {
         auto remaining = integer_field(value["cooldowns"], skill.id, true);
-        if (remaining > milliseconds(skill.cooldown)) throw Error(400, "invalid skill cooldown");
+        // 快照冷却是已结算状态，不随当前配置缩短；允许重连、迁移和配置回滚。
+        if (remaining > 600000) throw Error(400, "invalid skill cooldown");
         combat.cooldowns[skill.id] = static_cast<double>(remaining) / 1000;
     }
     if (combat.action_session != session) {
@@ -131,22 +207,22 @@ Json Role::json(bool full_combat) const {
 Json Scene::Npc::json() const {
     return {{"id", id}, {"name", name}, {"kind", kind}, {"x", x}, {"y", y},
         {"hp", hp}, {"max_hp", max_hp}, {"alive", hp > 0},
-        {"respawn_remaining_ms", milliseconds(respawn_remaining)}, {"target_id", target_id}};
+        {"respawn_remaining_ms", milliseconds(respawn_remaining)}, {"target_id", target_id},
+        {"config_version", config_version}};
 }
 
 Scene::Scene(Config config) : config_(std::move(config)) {
+    combat_config_ = validate_config(config_.combat_config.is_null() ? default_combat_config() : config_.combat_config);
+    config_history_.emplace(combat_config_["version"].get<std::string>(), combat_config_);
     const std::array<std::pair<double, double>, 4> spawns{{{-8, 4}, {10, 4}, {6, -10}, {18, 16}}};
     for (std::size_t i = 0; i < spawns.size(); ++i) {
         Npc npc;
         npc.id = "npc-" + std::to_string(i + 1);
         npc.name = i == 3 ? "试炼守卫" : "荒野狼";
         npc.kind = i == 3 ? "elite" : "wolf";
-        npc.x = npc.spawn_x = spawns[i].first;
-        npc.y = npc.spawn_y = spawns[i].second;
-        if (i == 3) {
-            npc.hp = npc.max_hp = 240; npc.damage = 14;
-            npc.speed = 2.4; npc.attack_period = 1.8;
-        }
+        npc.spawn_x = spawns[i].first;
+        npc.spawn_y = spawns[i].second;
+        reset_npc(npc);
         npcs_.emplace(npc.id, std::move(npc));
     }
 }
@@ -246,8 +322,50 @@ Json Scene::prepare(const Json& request) {
     return {{"role", role.json()}};
 }
 
+Json Scene::config_status() const {
+    return {{"config", combat_config_}, {"version", combat_config_["version"]},
+        {"generation", config_generation_}, {"applied_tick", config_applied_tick_}};
+}
+
+Json Scene::reload_config(const Json& request, bool validate_only) {
+    for (auto it = request.begin(); it != request.end(); ++it)
+        if (it.key() != "config" && it.key() != "expected_generation") throw Error(400, "unexpected config request field");
+    if (!request.contains("config")) throw Error(400, "complete config required");
+    if (request.contains("expected_generation") &&
+        integer_field(request, "expected_generation", true) != static_cast<std::int64_t>(config_generation_))
+        throw Error(409, "config generation conflict");
+    auto candidate = validate_config(request["config"]);
+    const auto version = candidate["version"].get<std::string>();
+    const auto previous = config_history_.find(version);
+    if (previous != config_history_.end() && previous->second != candidate)
+        throw Error(409, "config version already has different content");
+    if (previous == config_history_.end() && config_history_.size() >= 64)
+        throw Error(503, "config version history full; restart required");
+    const bool change = candidate != combat_config_;
+    if (change && config_generation_ >= 9007199254740991ULL) throw Error(503, "config generation exhausted");
+    if (validate_only) return {{"valid", true}, {"config", candidate}, {"version", version},
+        {"current_version", combat_config_["version"]}, {"generation", config_generation_},
+        {"applied_tick", config_applied_tick_}, {"would_change", change}};
+    if (change) {
+        // 完整验证结束后才发布新配置。既有玩家、怪物和动作缓存保持原样。
+        if (previous == config_history_.end()) config_history_.emplace(version, candidate);
+        combat_config_.swap(candidate);
+        ++config_generation_;
+        config_applied_tick_ = tick_;
+    }
+    auto result = config_status();
+    result["changed"] = change;
+    return result;
+}
+
 Json Scene::execute(const std::string& path, const Json& request) {
     if (!request.is_object()) throw Error(400, "JSON object required");
+    if (path == "/v1/config/status") {
+        if (!request.empty()) throw Error(400, "config status takes an empty object");
+        return config_status();
+    }
+    if (path == "/v1/config/reload" || path == "/v1/config/apply") return reload_config(request);
+    if (path == "/v1/config/validate") return reload_config(request, true);
     if (path == "/v1/enter") return enter(request);
     if (path == "/v1/prepare") return prepare(request);
     if (path == "/v1/remove") {
@@ -356,9 +474,11 @@ Json Scene::view(Entity& entity) {
             event["source_id"] == entity.role.role_id || event["target_id"] == entity.role.role_id)
             events.push_back(event);
     }
-    for (const auto& skill : skills) catalog.push_back(skill.json());
+    for (const auto& skill : skills) catalog.push_back(configured_skill(skill, combat_config_).json());
     Json result{{"self", entity.role.json()}, {"players", players}, {"tick", tick_},
-        {"scene_id", config_.scene_id}, {"mobs", mobs}, {"skills", catalog}, {"events", events}};
+        {"scene_id", config_.scene_id}, {"mobs", mobs}, {"skills", catalog}, {"events", events},
+        {"config_version", combat_config_["version"]}, {"config_generation", config_generation_},
+        {"config_applied_tick", config_applied_tick_}};
     // 为自身和元数据预留空间；极端长名字、满员 AOI 也不超过客户端 64KiB 帧上限。
     std::size_t used = result.dump(-1, ' ', true).size() + entity.role.json(false).dump(-1, ' ', true).size() + 1;
     std::size_t visible_count = 0;
@@ -395,7 +515,7 @@ void Scene::damage_npc(Entity& entity, Npc& npc, const std::string& skill, int a
     emit("damage", entity.role.role_id, npc.id, skill, damage, npc.x, npc.y);
     if (npc.hp == 0) {
         npc.target_id.clear();
-        npc.respawn_remaining = 8;
+        npc.respawn_remaining = npc.respawn_period;
         emit("death", entity.role.role_id, npc.id, skill, 0, npc.x, npc.y);
     }
     hits.push_back({{"target_id", npc.id}, {"damage", damage}, {"hp", npc.hp},
@@ -421,7 +541,7 @@ Json Scene::cast(Entity& entity, const Json& request) {
     if (combat.dead) throw Error(409, "dead players cannot cast; revive first");
     auto found = std::find_if(skills.begin(), skills.end(), [&](const Skill& skill) { return skill_id == skill.id; });
     if (found == skills.end()) throw Error(400, "unknown skill");
-    const auto& skill = *found;
+    const auto skill = configured_skill(*found, combat_config_);
     Npc* npc = nullptr;
     if (std::string(skill.target) == "enemy") {
         auto it = npcs_.find(target);
@@ -467,7 +587,8 @@ Json Scene::cast(Entity& entity, const Json& request) {
         emit("heal", entity.role.role_id, entity.role.role_id, skill_id, healed, entity.role.x, entity.role.y);
     }
     Json result{{"accepted", true}, {"seq", seq}, {"skill_id", skill_id}, {"target_id", target},
-        {"hits", hits}, {"healed", healed}, {"role", entity.role.json()}, {"tick", tick_}};
+        {"hits", hits}, {"healed", healed}, {"role", entity.role.json()}, {"tick", tick_},
+        {"config_version", combat_config_["version"]}};
     entity.last_action_key = key;
     entity.last_action_result = result;
     return result;
@@ -526,6 +647,13 @@ void Scene::damage_player(Npc& npc, Entity& entity) {
 }
 
 void Scene::reset_npc(Npc& npc) {
+    const auto& parameters = combat_config_["monsters"][npc.kind];
+    npc.max_hp = parameters["max_hp"].get<int>();
+    npc.damage = parameters["damage"].get<int>();
+    npc.speed = parameters["move_speed"].get<double>();
+    npc.attack_period = parameters["attack_interval_ms"].get<double>() / 1000;
+    npc.respawn_period = parameters["respawn_ms"].get<double>() / 1000;
+    npc.config_version = combat_config_["version"].get<std::string>();
     npc.x = npc.spawn_x; npc.y = npc.spawn_y; npc.hp = npc.max_hp;
     npc.target_id.clear(); npc.stun_remaining = npc.attack_remaining = npc.respawn_remaining = 0;
 }

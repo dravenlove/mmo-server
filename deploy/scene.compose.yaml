@@ -16,6 +16,12 @@ services:
       TICK_HZ: ${TICK_HZ:-20}
       AOI_RADIUS: ${AOI_RADIUS:-30}
       MOVE_SPEED: ${MOVE_SPEED:-6}
+      COMBAT_CONFIG_FILE: ${COMBAT_CONFIG_FILE:-}
+    volumes:
+      - type: bind
+        source: ${COMBAT_CONFIG_DIR:-./combat-config}
+        target: /app/config
+        read_only: true
     ports:
       - "${SCENE_BIND_IP:-127.0.0.1}:${SCENE_PORT:-9001}:${SCENE_PORT:-9001}"
     healthcheck:

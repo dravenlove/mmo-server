@@ -26,7 +26,7 @@ public partial class MainWindow : Window
     private double _buttonX, _buttonY;
     private bool _lastMoving;
     private string? _pendingTransferId, _pendingTarget;
-    private readonly string? _screenshotPath, _uiCheckPath, _probeReportPath;
+    private readonly string? _screenshotPath, _uiCheckPath, _probeReportPath, _waitConfigVersion;
 
     public MainWindow(string[] args)
     {
@@ -40,6 +40,7 @@ public partial class MainWindow : Window
         _screenshotPath = Arg("--screenshot");
         _uiCheckPath = Arg("--ui-check-report");
         _probeReportPath = Arg("--probe-report");
+        _waitConfigVersion = Arg("--wait-config-version")?.Trim();
         InitializeComponent();
         InitializeCombat();
         var settings = ClientSettings.Load(_dataDirectory);
@@ -240,7 +241,8 @@ public partial class MainWindow : Window
         ApplyRole(view.Self);
         _combatView = view with { Self = _role! };
         World.Update(_combatView);
-        UpdateTargetHud();
+        UpdateCombatHud();
+        UpdateConfigHud(view);
         TickLabel.Text = $"{view.SceneId}  ·  Tick {view.Tick}  ·  可见 {view.Players.Count} 人";
     }
 
@@ -424,14 +426,25 @@ public partial class MainWindow : Window
             if (_role!.RoleId != id || _role.SceneId != "scene-2" || _role.Coins != 100) throw new InvalidOperationException("界面重连身份或状态不匹配。");
             results.Add("原凭据重连及身份、金币和场景保持");
             await CheckCombatUiAsync(results);
+            if (!string.IsNullOrWhiteSpace(_waitConfigVersion)) await CheckLiveConfigUiAsync(path, _waitConfigVersion, results);
             _busy = false; UpdateControls();
             await Task.Delay(350); Capture(Path.ChangeExtension(path, ".png"));
-            File.WriteAllText(path, JsonSerializer.Serialize(new { ok = true, checks = results, combat_supported = _role?.Combat is not null && (_combatView?.Skills?.Count ?? 0) > 0, credentials_not_logged = true }, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(path, JsonSerializer.Serialize(new
+            {
+                ok = true, checks = results,
+                combat_supported = _role?.Combat is not null && (_combatView?.Skills?.Count ?? 0) > 0,
+                config_version = _combatView?.ConfigVersion ?? "",
+                config_generation = _combatView?.ConfigGeneration ?? 0,
+                config_applied_tick = _combatView?.ConfigAppliedTick ?? 0,
+                credentials_not_logged = true
+            }, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-            File.WriteAllText(path, JsonSerializer.Serialize(new { ok = false, checks = results, error = Explain(ex) }, new JsonSerializerOptions { WriteIndented = true }));
+            string logTail = LogBox.Text.Length > 4000 ? LogBox.Text[^4000..] : LogBox.Text;
+            File.WriteAllText(path, JsonSerializer.Serialize(new { ok = false, checks = results, error = Explain(ex), log_tail = logTail }, new JsonSerializerOptions { WriteIndented = true }));
+            Capture(Path.ChangeExtension(path, ".failed.png"));
         }
         finally { Close(); }
     }

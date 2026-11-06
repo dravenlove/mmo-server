@@ -40,17 +40,24 @@ jobs:
           printf 'IMAGE_TAG=%s\nIMAGE_PREFIX=ghcr.io/%s\n' \
             "$tag" "${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
+      - name: Verify scene rules and configuration tool
+        run: |
+          cmake -S scene -B build/scene-ci -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/scene-ci --parallel 2
+          ctest --test-dir build/scene-ci --output-on-failure
+          python3 scripts/test_config_tool.py
+
       - name: Build and verify Linux image packages
         run: python3 scripts/package_images.py --tag "$IMAGE_TAG" --platform linux/amd64
 
       - name: Verify containers and persistent volumes
-        run: python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --combat
+        run: python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --hot-reload
 
       - name: Verify MySQL integration and recovery
         run: |
           docker pull mysql:8.0
           python3 scripts/test_mysql.py
-          python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql --combat
+          python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql --hot-reload
 
       - name: Sign in to GitHub Container Registry
         env:
@@ -74,3 +81,16 @@ jobs:
       - name: Sign out
         if: always()
         run: docker logout ghcr.io
+
+      - name: Verify anonymous image downloads
+        run: |
+          anonymous_config=$(mktemp -d)
+          trap 'rm -rf -- "$anonymous_config"' EXIT
+          printf '{}\n' > "$anonymous_config/config.json"
+          for service in backend gateway client scene; do
+            image="$IMAGE_PREFIX/$service:$IMAGE_TAG"
+            docker --config "$anonymous_config" pull "$image"
+            actual=$(docker --config "$anonymous_config" image inspect "$image" \
+              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+            test "$actual" = "$GITHUB_SHA"
+          done

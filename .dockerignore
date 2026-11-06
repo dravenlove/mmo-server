@@ -9,6 +9,7 @@ backups
 tokens
 certs
 deploy/certs
+deploy/combat-config
 build
 scene/build
 desktop/**/bin

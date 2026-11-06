@@ -7,6 +7,7 @@
 /backups/
 /certs/
 /deploy/certs/
+/deploy/combat-config/
 /scene/build/
 /desktop/**/bin/
 /desktop/**/obj/

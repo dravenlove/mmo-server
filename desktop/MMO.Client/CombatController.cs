@@ -44,6 +44,17 @@ public partial class MainWindow
     private Mob? SelectedMob => _combatView?.Mobs?.FirstOrDefault(mob => mob.Id == World.SelectedTargetId);
     private double TargetDistance => _role is not null && SelectedMob is { } mob ? Math.Sqrt(Math.Pow(mob.X - _role.X, 2) + Math.Pow(mob.Y - _role.Y, 2)) : double.PositiveInfinity;
 
+    private void UpdateConfigHud(WorldView? view)
+    {
+        bool available = !string.IsNullOrWhiteSpace(view?.ConfigVersion);
+        ConfigVersionLabel.Text = view is null ? "规则 —" : available
+            ? $"规则 {view.ConfigVersion} · #{view.ConfigGeneration}"
+            : "规则版本：服务端未提供";
+        ConfigVersionLabel.ToolTip = available
+            ? $"当前场景战斗规则：{view!.ConfigVersion}\n发布代次：{view.ConfigGeneration}\n应用于场景 Tick {view.ConfigAppliedTick}\n数值更新随服务器状态自动刷新，无需重新登录。"
+            : "服务器提供规则版本后在这里显示；旧版服务器仍可正常使用已有功能。";
+    }
+
     private string? SkillUnavailable(string id)
     {
         if (!_loggedIn || _connection?.IsConnected != true) return "请先登录角色。";
@@ -95,7 +106,8 @@ public partial class MainWindow
             if (skill is not null)
             {
                 control.Cost.Text = $"{(skill.Target == "self" ? "自身" : "目标")} {skill.Range:0.#}m · {skill.MpCost} 法力";
-                control.Button.ToolTip = $"{skill.Description}\n伤害 {skill.Damage} · 治疗 {skill.Heal} · 冷却 {skill.CooldownMs / 1000:0.#} 秒\n{SkillUnavailable(id) ?? "可以施放"}";
+                string config = string.IsNullOrWhiteSpace(_combatView?.ConfigVersion) ? "" : $"\n规则 {_combatView.ConfigVersion} · #{_combatView.ConfigGeneration}";
+                control.Button.ToolTip = $"{skill.Name}：{skill.Description}\n伤害 {skill.Damage} · 治疗 {skill.Heal}\n范围 {skill.Range:0.#} 米 · 消耗 {skill.MpCost} 法力 · 冷却 {skill.CooldownMs / 1000:0.#} 秒{config}\n{SkillUnavailable(id) ?? "可以施放"}";
             }
             else control.Button.ToolTip = "等待服务器提供技能信息";
         }
@@ -151,7 +163,9 @@ public partial class MainWindow
             });
             if (!ReferenceEquals(conn, _connection)) return false;
             if (result.Data.TryGetProperty("role", out var role)) ApplyRole(Role.FromJson(role));
-            Log("施放：" + skill.Name + (target.Length == 0 ? "" : " → " + target));
+            string version = result.Data.TryGetProperty("config_version", out var configVersion) ? configVersion.GetString() ?? "" : "";
+            Log("施放：" + skill.Name + (target.Length == 0 ? "" : " → " + target) +
+                (string.IsNullOrWhiteSpace(version) ? "" : " · 结算规则 " + version));
             return true;
         }
         catch (Exception ex)
@@ -182,6 +196,7 @@ public partial class MainWindow
     private void ClearCombat()
     {
         _combatView = null; _combatSnapshotAt = default; _skillSending = false;
+        UpdateConfigHud(null);
         World.SelectTarget(null); UpdateCombatHud();
     }
 
@@ -189,6 +204,21 @@ public partial class MainWindow
     {
         if (_role?.Combat is null || (_combatView?.Skills?.Count ?? 0) == 0) return;
         _busy = false; UpdateControls();
+        if (!string.IsNullOrWhiteSpace(_combatView?.ConfigVersion))
+        {
+            if (ConfigVersionLabel.Text != $"规则 {_combatView.ConfigVersion} · #{_combatView.ConfigGeneration}" ||
+                ConfigVersionLabel.ToolTip is not string versionTip || !versionTip.Contains($"Tick {_combatView.ConfigAppliedTick}"))
+                throw new InvalidDataException("场景规则版本未同步到界面。");
+            foreach (var skill in _combatView.Skills!)
+            {
+                if (!_skillControls.TryGetValue(skill.Id, out var control)) continue;
+                if (control.Button.ToolTip is not string tip || !tip.Contains($"伤害 {skill.Damage}") ||
+                    !tip.Contains($"治疗 {skill.Heal}") || !tip.Contains($"冷却 {skill.CooldownMs / 1000:0.#} 秒") ||
+                    !tip.Contains($"消耗 {skill.MpCost} 法力") || !tip.Contains($"范围 {skill.Range:0.#} 米") || !tip.Contains(_combatView.ConfigVersion))
+                    throw new InvalidDataException("技能提示没有使用服务器当前规则数值。");
+            }
+            results.Add("规则版本、发布代次与服务器技能数值提示");
+        }
         var target = (_combatView!.Mobs ?? []).Where(mob => mob.Alive)
             .OrderBy(mob => Math.Pow(mob.X - _role.X, 2) + Math.Pow(mob.Y - _role.Y, 2)).FirstOrDefault()
             ?? throw new InvalidDataException("战斗界面检查缺少活着的怪物。");
@@ -244,5 +274,38 @@ public partial class MainWindow
         if (_role.X <= revivedX) throw new InvalidDataException("复活后移动没有恢复。");
         results.Add("服务器复活计时与营地重生");
         _busy = false; UpdateControls();
+    }
+
+    private async Task CheckLiveConfigUiAsync(string reportPath, string expectedVersion, List<string> results)
+    {
+        // 仅由已有回环地址保护的 UI 验收调用；外部驱动看到 ready 后才发布测试规则。
+        var connection = _connection ?? throw new InvalidDataException("热更界面检查缺少活动连接。");
+        var role = _role ?? throw new InvalidDataException("热更界面检查缺少角色。");
+        var view = _combatView ?? throw new InvalidDataException("热更界面检查缺少场景视图。");
+        if (view.ConfigVersion == expectedVersion) throw new InvalidDataException("热更界面检查必须从不同版本开始。");
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(reportPath))!);
+        File.WriteAllText(reportPath + ".ready", JsonSerializer.Serialize(new
+        {
+            role_id = role.RoleId, session_epoch = role.SessionEpoch, scene_id = view.SceneId,
+            config_version = view.ConfigVersion, config_generation = view.ConfigGeneration,
+            expected_version = expectedVersion
+        }));
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (_combatView?.ConfigVersion != expectedVersion && DateTime.UtcNow < deadline)
+        {
+            if (!ReferenceEquals(connection, _connection) || !_loggedIn || !connection.IsConnected)
+                throw new InvalidDataException("配置更新期间连接发生变化。");
+            await Task.Delay(100);
+        }
+        if (_combatView?.ConfigVersion != expectedVersion) throw new TimeoutException("等待新规则推送超时。");
+        if (!ReferenceEquals(connection, _connection) || _role?.RoleId != role.RoleId || _role.SessionEpoch != role.SessionEpoch)
+            throw new InvalidDataException("热更期间角色身份或会话发生变化。");
+        if (_combatView.ConfigGeneration <= view.ConfigGeneration ||
+            ConfigVersionLabel.Text != $"规则 {expectedVersion} · #{_combatView.ConfigGeneration}")
+            throw new InvalidDataException("推送后的规则版本与发布代次未刷新到界面。");
+        if (Definition("strike")?.Damage != 36 || StrikeButton.ToolTip is not string strikeTip || !strikeTip.Contains("伤害 36") ||
+            Definition("mend")?.CooldownMs != 5000 || MendButton.ToolTip is not string mendTip || !mendTip.Contains("冷却 5 秒"))
+            throw new InvalidDataException("测试规则中的斩击伤害或治疗冷却未热更新到技能提示。");
+        results.Add("同一会话接收热更推送，规则版本、斩击伤害和治疗冷却实时刷新");
     }
 }

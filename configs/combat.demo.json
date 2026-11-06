@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "version": "demo-v2",
+  "skills": {
+    "strike": {"damage": 36, "heal": 0, "mp_cost": 0, "range": 3.2, "cooldown_ms": 600},
+    "whirlwind": {"damage": 48, "heal": 0, "mp_cost": 10, "range": 5, "cooldown_ms": 3000},
+    "charge": {"damage": 32, "heal": 0, "mp_cost": 10, "range": 18, "cooldown_ms": 4000},
+    "mend": {"damage": 0, "heal": 60, "mp_cost": 20, "range": 0, "cooldown_ms": 5000}
+  },
+  "monsters": {
+    "wolf": {"max_hp": 120, "damage": 4, "move_speed": 3, "attack_interval_ms": 1600, "respawn_ms": 3000},
+    "elite": {"max_hp": 360, "damage": 10, "move_speed": 2.4, "attack_interval_ms": 2000, "respawn_ms": 3000}
+  }
+}

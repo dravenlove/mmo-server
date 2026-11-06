@@ -14,6 +14,7 @@
    </ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="CombatSkillButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+   <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="SkillPlate" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="SkillPlate" Property="Opacity" Value="0.9"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="SkillPlate" Property="Opacity" Value="0.65"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="SkillPlate" Property="Opacity" Value="0.76"/><Setter Property="Cursor" Value="Arrow"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
  </Window.Resources>
@@ -48,6 +49,7 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
      <DockPanel><TextBlock x:Name="RoleNameLabel" Text="尚未登录" FontSize="20" FontWeight="SemiBold"/><TextBlock Text="先锋" Foreground="#AFBBD0" HorizontalAlignment="Right" VerticalAlignment="Center"/></DockPanel>
      <TextBlock x:Name="SceneLabel" Text="场景 —" Foreground="#8EA3C2" FontSize="11" Margin="0,4,0,0"/>
+     <Border Background="#192C3E" CornerRadius="5" Padding="7,4" Margin="0,6,0,0"><TextBlock x:Name="ConfigVersionLabel" Text="规则 —" Foreground="#AFC8E6" FontSize="12" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="CombatConfigVersion"/></Border>
      <TextBlock x:Name="PositionLabel" Text="坐标 —" Foreground="#8EA3C2" FontSize="11" Margin="0,3,0,0"/>
      <Grid Margin="0,10,0,4"><TextBlock Text="生命" Foreground="#CFA5AB"/><TextBlock x:Name="HpLabel" Text="—" HorizontalAlignment="Right"/></Grid>
      <ProgressBar x:Name="HpBar" Style="{StaticResource ResourceBar}" Foreground="#D16E7D"/>

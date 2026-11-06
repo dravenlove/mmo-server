@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin-dir', type=Path, default=ROOT / 'bin')
+    parser.add_argument('--hot-reload', action='store_true', help='额外验证固定配置文件的在线更新与回滚')
     args = parser.parse_args()
     suffix = '.exe' if os.name == 'nt' else ''
     binaries = {name: args.bin_dir.resolve() / (name + suffix) for name in ('backend', 'gateway', 'scene-server')}
@@ -30,7 +31,7 @@ def main():
     ports = {name: free_port() for name in ('backend', 'gateway', 'health', 'scene-1', 'scene-2')}
     assert len(set(ports.values())) == len(ports)
     key = secrets.token_hex(32)
-    env = dict(os.environ, INTERNAL_TOKEN=key, BACKEND_DB_DRIVER='sqlite', TLS_CERT_FILE='', TLS_KEY_FILE='')
+    env = dict(os.environ, INTERNAL_TOKEN=key, BACKEND_DB_DRIVER='sqlite', TLS_CERT_FILE='', TLS_KEY_FILE='', COMBAT_CONFIG_FILE='')
     for field in tuple(env):
         if field.startswith('MYSQL_'):
             env.pop(field)
@@ -42,6 +43,18 @@ def main():
         'gateway': dict(env, GATEWAY_LISTEN=f'127.0.0.1:{ports["gateway"]}',
                         GATEWAY_HEALTH_LISTEN=f'127.0.0.1:{ports["health"]}', BACKEND_URL=f'http://127.0.0.1:{ports["backend"]}')
     }
+    active_config = work / 'current.json'
+    previous_config = [None]
+
+    def write_rules(value):
+        temporary = active_config.with_suffix('.tmp')
+        temporary.write_text(json.dumps(value, indent=2) + '\n', encoding='utf-8')
+        os.replace(temporary, active_config)
+
+    if args.hot_reload:
+        write_rules(json.loads((ROOT / 'configs/combat.default.json').read_text(encoding='utf-8')))
+        for name in ('scene-1', 'scene-2'):
+            configs[name]['COMBAT_CONFIG_FILE'] = str(active_config)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     processes, logs, peers, checks = {}, [], [], []
 
@@ -105,6 +118,41 @@ def main():
         for name in ('scene-1', 'scene-2', 'backend', 'gateway'):
             start(name)
         run_checks(peer, passed, checkpoint, restart)
+        if args.hot_reload:
+            from hot_reload_checks import run_checks as hot_checks
+
+            def admin(scene, operation, body, authenticated=True):
+                port = ports[{'scene1': 'scene-1', 'scene2': 'scene-2'}[scene]]
+                headers = {'Content-Type': 'application/json'}
+                if authenticated:
+                    headers['X-Internal-Token'] = key
+                request = urllib.request.Request(f'http://127.0.0.1:{port}/v1/config/{operation}',
+                                                 json.dumps(body).encode(), headers)
+                try:
+                    with opener.open(request, timeout=25) as response:
+                        return response.status, json.load(response)
+                except urllib.error.HTTPError as exc:
+                    return exc.code, json.load(exc)
+
+            def publish(value):
+                current = json.loads(active_config.read_text(encoding='utf-8'))
+                states = {}
+                for scene in ('scene1', 'scene2'):
+                    code, states[scene] = admin(scene, 'status', {})
+                    assert code == 200
+                    code, checked = admin(scene, 'validate', {'config': value, 'expected_generation': states[scene]['generation']})
+                    assert code == 200 and checked['valid'], checked
+                previous_config[0] = current
+                write_rules(value)
+                for scene, state in states.items():
+                    code, result = admin(scene, 'reload', {'expected_generation': state['generation']})
+                    assert code == 200 and result['version'] == value['version'], result
+
+            def rollback():
+                assert previous_config[0] is not None
+                publish(previous_config[0])
+
+            hot_checks(peer, passed, admin, publish, rollback, checkpoint, restart)
     except Exception as exc:
         error = str(exc)
         print('FAIL', error, flush=True)
@@ -118,7 +166,7 @@ def main():
             stop(name)
         for log in logs:
             log.close()
-        report = {'ok': error is None, 'checks': checks, 'count': len(checks), 'error': error,
+        report = {'ok': error is None, 'checks': checks, 'count': len(checks), 'error': error, 'hot_reload': args.hot_reload,
                   'external_services_contacted': False, 'services_stopped': all(p.poll() is not None for p in processes.values())}
         (work / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         print('Report:', work / 'report.json', flush=True)

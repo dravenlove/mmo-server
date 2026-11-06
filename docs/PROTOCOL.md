@@ -7,11 +7,11 @@
 Role: `{role_id:string,name:string,scene_id:string,owner_epoch:int64,session_epoch:int64,x:double,y:double,coins:int64,combat?:object}`。
 Ref: `{role_id:string,owner_epoch:int64,session_epoch:int64}`。
 Route: `{role:Role,scene_url:string}`。
-View: `{self:Role,players:Role[],tick:uint64,scene_id:string}`；战斗版本追加 mobs、skills、events 及 players_truncated/visible_player_count。旧字段保留。
+View: `{self:Role,players:Role[],tick:uint64,scene_id:string}`；战斗版本追加 mobs、skills、events 及 players_truncated/visible_player_count；数值热更版再追加 `config_version:string,config_generation:uint64,config_applied_tick:uint64`。旧字段保留。
 
 ## C++ SceneHost
 
-环境：`INTERNAL_TOKEN` 必填；`SCENE_ID=scene-1`；`SCENE_HOST=127.0.0.1`；`SCENE_PORT=9001`；`TICK_HZ=20`；`AOI_RADIUS=30`；`MOVE_SPEED=6`。
+环境：`INTERNAL_TOKEN` 必填；`SCENE_ID=scene-1`；`SCENE_HOST=127.0.0.1`；`SCENE_PORT=9001`；`TICK_HZ=20`；`AOI_RADIUS=30`；`MOVE_SPEED=6`；可选 `COMBAT_CONFIG_FILE` 为固定数值配置文件路径。不设置使用内置默认，指定文件但读取或校验失败则启动退出。
 一个实例一个场景，位置限定 [-100,100]。网络线程通过有界命令队列把修改投递到 Tick 线程；tick 负责移动、战斗与怪物状态。网络等待响应有超时，超时不撤销已入队命令。每个场景最多保留 128 个已加载角色，包括离线、冻结和待激活角色；拒绝超限。
 
 - GET `/healthz`: `{ok:true,scene_id:string,tick:uint64,players:int}`。
@@ -25,6 +25,19 @@ View: `{self:Role,players:Role[],tick:uint64,scene_id:string}`；战斗版本追
 - POST `/v1/prepare`: `{role:Role,transfer_id:string}` → `{role:Role}`。目标使用 Backend 持久预留的更大 owner_epoch 创建待激活对象；失败迁移也消耗代次，不能假定恰好 +1。相同 Ref/transfer 重试幂等；冲突拒绝。准备对象不得 view/move/enter 或影响其他角色。
 - POST `/v1/activate`: Ref 加 `{transfer_id:string}` → `{role:Role}`。仅匹配准备记录可激活，相同请求重试幂等。
 - POST `/v1/remove`: Ref（可附 transfer_id）→ `{accepted:true}`。精确匹配才删除；不存在视为成功，不得删除更高代次。删除后保留代次墓碑以拒绝延迟 enter/prepare；进程重启后墓碑丢失的边界需说明。
+
+### 数值配置管理
+
+以下接口同样需要 `X-Internal-Token`，不通过 Gateway 玩家 TCP 暴露。配置全量校验与切换都在原有 Tick 命令队列执行；请求超时不撤销已入队命令。完整 schema 与部署工具见 [数值热更](CONFIG_HOT_RELOAD.md)。
+
+- POST `/v1/config/status`: `{}` → `{config:object,version:string,generation:uint64,applied_tick:uint64}`。返回当前生效完整配置；不读取或修改文件。
+- POST `/v1/config/validate`: `{config:object,expected_generation?:int64}` → `{valid:true,config:object,version:string,current_version:string,generation:uint64,applied_tick:uint64,would_change:bool}`。验证完整配置、同名版本冲突、64 版本历史容量及可选 CAS，不占用版本名、不修改玩家或配置状态。
+- POST `/v1/config/reload`: `{expected_generation?:int64}` → 当前配置状态加 `{changed:bool}`。HTTP 线程限量读取启动时固定的 `COMBAT_CONFIG_FILE`，随后交给 Tick 校验和切换；请求不能传配置或路径。未设置文件返回 409。
+- POST `/v1/config/apply`: `{config:object,expected_generation?:int64}` → 当前配置状态加 `{changed:bool}`。仅内存调试，不写文件；重启重新读取启动文件。正式部署使用固定文件加 reload。
+
+配置固定 `schema_version=1`，完整包含 `version,skills,monsters`，仅允许四个既有技能 ID 与 wolf/elite。文件和请求上限 64 KiB，拒绝重复/未知/缺失键、非法数值及 NaN/Infinity。技能行为、名称、目标类型和玩家 180/100 上限保持固定。技能数值在新施法时生效；现有 HP/MP/CD、动作高水位和缓存不重置。NPC 在下次刷新或脱战重置时整体采用新参数；当前死亡刷新等待沿用该 NPC 持有版本。
+
+每次实际切换 `generation` 增 1，并记录 `applied_tick`；当前同版本同内容幂等不增。同版本不同内容或过期 `expected_generation` 返回 409，历史容量耗尽拒绝新版本并返回 503。进程最多记住 64 个版本名，不淘汰历史；历史同内容回切允许，属于一次新切换。历史、代次和应用 Tick 在重启后重建，代次从 1 开始。单节点切换原子，但管理工具对两场景依次发布，不保证它们同时生效；失败恢复规则见 [发布一致性](CONFIG_HOT_RELOAD.md#发布一致性与故障处理)。
 
 ## Go Backend
 
@@ -62,13 +75,13 @@ Gateway 每 200ms 读取一次 View 并推送，每 1 秒验证 Backend session�
 
 ## 战斗状态与兼容
 
-Role 可追加 `combat` 对象：`hp,max_hp,mp,max_mp,dead,revive_remaining_ms,revision,last_action_seq,action_session,cooldowns`；cooldowns 为 strike/whirlwind/charge/mend 四项剩余毫秒。自身角色和迁移/检查点使用完整状态，其他可见玩家可仅带血量摘要。处于 Active 状态且存活的角色每秒恢复 6 法力，最多 100。新会话只清动作序号，血蓝/冷却保留；冻结或待激活角色不参与战斗，法力恢复、技能冷却和复活倒计时均暂停。
+Role 可追加 `combat` 对象：`hp,max_hp,mp,max_mp,dead,revive_remaining_ms,revision,last_action_seq,action_session,cooldowns`；cooldowns 为 strike/whirlwind/charge/mend 四项剩余毫秒。新版允许每项剩余 CD 为 0～600000，不再以当前技能表为恢复上限，因此缩短数值配置 CD 后，旧剩余 CD 仍可重连、迁移和恢复；不会被主动截短。旧 combat 二进制可能拒绝新版产生的更长 CD，数值回滚不等于应用二进制回退。自身角色和迁移/检查点使用完整状态，其他可见玩家可仅带血量摘要。处于 Active 状态且存活的角色每秒恢复 6 法力，最多 100。新会话只清动作序号，血蓝/冷却保留；冻结或待激活角色不参与战斗，法力恢复、技能冷却和复活倒计时均暂停。角色 `revision` 是战斗状态版本，与配置 `generation` 不同。
 
 施法和复活共享同一会话的单调动作序号高水位。动作结果缓存仅留在当前进程的角色对象中，不随迁移快照保存；目标场景或重启进程恢复后，旧序号可被拒绝，但不会重新结算。网络超时重试同一次技能时应复用原序号，不得自动换新序号重复发送。
 
-View.mobs 含 `id,name,kind,x,y,hp,max_hp,alive,respawn_remaining_ms,target_id`；skills 含 `id,name,description,range,cooldown_ms,mp_cost,damage,heal,target`；events 含最近最多32项 `id,type,source_id,target_id,skill_id,value,x,y,tick`。事件类型包含 cast/damage/heal/death/respawn/revive/reset，客户端应按场景和事件id去重，初次加入不回放历史伤害。
+View.mobs 含 `id,name,kind,x,y,hp,max_hp,alive,respawn_remaining_ms,target_id,config_version`；怪物 `config_version` 表示其所持参数版本，可能暂时不同于场景当前版本。skills 含 `id,name,description,range,cooldown_ms,mp_cost,damage,heal,target`，来自当前生效配置；events 含最近最多32项 `id,type,source_id,target_id,skill_id,value,x,y,tick`。事件类型包含 cast/damage/heal/death/respawn/revive/reset，客户端应按场景和事件id去重，初次加入不回放历史伤害。
 
-`cast` 返回 `{accepted,seq,skill_id,target_id,hits:[{target_id,damage,hp,max_hp,dead}],healed,role,tick}`，`revive` 返回 `{accepted,seq,role,tick}`。目标只允许当前可交互的怪物；本版未开放 PvP。
+`cast` 返回 `{accepted,seq,skill_id,target_id,hits:[{target_id,damage,hp,max_hp,dead}],healed,role,tick,config_version}`；`config_version` 为这次施法采用的配置版本，重复缓存结果保留原版本。`revive` 返回 `{accepted,seq,role,tick}`。目标只允许当前可交互的怪物；本版未开放 PvP。
 
 为遵守64KiB外部帧限制，极端满员/长名字的AOI视图可裁剪其他players；`players_truncated=true` 时，`visible_player_count` 表示未裁剪总数，自身始终保留。
 
