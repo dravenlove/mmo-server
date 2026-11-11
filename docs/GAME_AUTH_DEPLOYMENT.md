@@ -92,7 +92,7 @@ sudo systemctl enable --now mmo-auth-link.service
 sudo systemctl is-active mmo-auth-link.service
 ```
 
-服务断线自动重连。首次建立反向转发时，检查 auth 回环 13306 未被其他程序占用。SSH 用户示例为 root；若改用专用用户，同步修改 unit 和对应公钥文件。不要修改全局 SSH 安全设置来迁就隧道。
+服务断线自动重连。修改数据库目标地址时，除了 game 的 MySQL 参数，还要同步修改 `link.env` 的 MySQL 转发目标并重启链路，再等待 Auth 恢复健康。首次建立反向转发时，检查 auth 回环 13306 未被其他程序占用。SSH 用户示例为 root；若改用专用用户，同步修改 unit 和对应公钥文件。不要修改全局 SSH 安全设置来迁就隧道。
 
 ## 4. 配置与启动
 
@@ -101,6 +101,8 @@ game 环境文件填写真实 `GATEWAY_BIND_IP`、`AUTH_URL=http://游戏主机D
 auth 环境文件默认 `MYSQL_HOST=127.0.0.1`、`MYSQL_PORT=13306`，其余数据库名、账号、密码与既有数据库一致。`INTERNAL_TOKEN` 与 game 相同。Auth 使用独立数据库命名锁，不能同时启动两个 Auth 写入同一个库；Game Backend 也只允许一个写入者。
 
 规则热更：将原场景主机的整个 `deploy/combat-config/` 目录复制到 game，保留 `current.json` / `previous.json`；game env 设置 `COMBAT_CONFIG_FILE=/app/config/current.json`。保留 JSON 文件可读、目录可遍历的权限，不把配置目录改成仅 root 可读。没有原规则时先初始化，再按 [热更文档](CONFIG_HOT_RELOAD.md)设置。
+
+从旧项目复用具名数据卷时，Compose 可能提示该卷属于旧项目；核对挂载名称仍为原卷即可，不要删除它来消除提示。
 
 先在 auth 主机执行：
 

@@ -77,7 +77,7 @@ dist/docker/game-auth-20261111-v1-linux-amd64/
 cd ~/mmo-images
 sha256sum -c mmo-game.tar.gz.sha256
 sudo docker load -i mmo-game.tar.gz
-sudo docker image inspect mmo/backend:game-auth-20261111-v1 mmo/gateway:game-auth-20261111-v1 mmo/client:game-auth-20261111-v1 --format '{{json .RepoTags}} {{.Os}}/{{.Architecture}}'
+sudo docker image inspect mmo/backend:game-auth-20261111-v1 mmo/gateway:game-auth-20261111-v1 mmo/scene:game-auth-20261111-v1 mmo/client:game-auth-20261111-v1 --format '{{json .RepoTags}} {{.Os}}/{{.Architecture}}'
 ```
 
 **OpenCloudOS：**
@@ -86,7 +86,7 @@ sudo docker image inspect mmo/backend:game-auth-20261111-v1 mmo/gateway:game-aut
 cd ~/mmo-images
 sha256sum -c mmo-auth.tar.gz.sha256
 sudo docker load -i mmo-auth.tar.gz
-sudo docker image inspect mmo/scene:game-auth-20261111-v1 --format '{{json .RepoTags}} {{.Os}}/{{.Architecture}}'
+sudo docker image inspect mmo/backend:game-auth-20261111-v1 --format '{{json .RepoTags}} {{.Os}}/{{.Architecture}}'
 ```
 
 只有校验成功才加载；加载成功后再检查镜像标签。加载与启动使用同一个 Docker 引擎，不混用指向不同引擎的用户/context。
@@ -114,9 +114,9 @@ test -f deploy/auth-host.env || (umask 077; cp deploy/auth-host.env.example depl
 chmod 600 deploy/auth-host.env
 ```
 
-这些命令从 `~/mmo-server` 运行。`gateway` 填 `scene` 的私网/VPN地址，`scene` 绑定自己的真实私网/VPN地址；两台使用同一随机 `INTERNAL_TOKEN`。更新镜像不需要重新生成密钥，也不改变数据库卷。公网玩家入口按部署文档配置 TLS。
+这些命令从 `~/mmo-server` 运行。game 配置本机 Docker 场景路由与 Auth 隧道入口，auth 使用回环 MySQL 反向转发；两台保留同一 `INTERNAL_TOKEN`。更新镜像不需要重新生成密钥，也不改变数据库卷。公网玩家入口按部署文档配置 TLS。
 
-## 6. 先启动 `scene`，再启动 `gateway`
+## 6. 先建立加密链路并启动 `auth`，再启动 `game`
 
 首次部署先在 **OpenCloudOS** 执行：
 
@@ -127,7 +127,7 @@ sudo docker compose --env-file deploy/auth-host.env -f deploy/auth-host.compose.
 sudo docker compose --env-file deploy/auth-host.env -f deploy/auth-host.compose.yaml -p mmo-auth ps
 ```
 
-确认两个场景健康，再在 **Ubuntu** 执行：
+确认鉴权服务健康，再在 **Ubuntu** 执行：
 
 ```bash
 cd ~/mmo-server
@@ -136,9 +136,9 @@ sudo docker compose --env-file deploy/game-host.env -f deploy/game-host.compose.
 curl --fail http://127.0.0.1:8080/readyz
 ```
 
-`--no-build` 禁止编译，`--pull never` 禁止从镜像仓库拉取；标签填错或未加载时会直接失败。随后按两机文档从 `gateway` 的两个容器分别检查 `scene` 的 9001/9002，并验证真实客户端流程。
+`--no-build` 禁止编译，`--pull never` 禁止从镜像仓库拉取；标签填错或未加载时会直接失败。随后按两机文档检查游戏服务同机路由与真实客户端流程。
 
-`gateway` 包包含客户端，可直接在 Ubuntu 上进行私网/回环测试，无需现场编译客户端：
+`game` 包包含客户端，可直接在 Ubuntu 上进行私网/回环测试，无需现场编译客户端：
 
 ```bash
 sudo docker run --rm -it --pull never --network host \
@@ -146,11 +146,11 @@ sudo docker run --rm -it --pull never --network host \
   mmo/client:game-auth-20261111-v1 -addr 127.0.0.1:7000 -name alice -token-file /app/tokens/alice.token
 ```
 
-网关未监听回环地址时，将 `-addr` 改为 `gateway` 的实际绑定地址。TLS 入口再使用证书对应的域名及客户端 TLS 参数。
+网关未监听回环地址时，将 `-addr` 改为 game 主机的实际绑定地址。TLS 入口再使用证书对应的域名及客户端 TLS 参数。
 
 ## 7. 后续更新和资源观察
 
-新版本在本机构建新标签，上传、校验、加载后，按 [维护窗口更新步骤](GAME_AUTH_DEPLOYMENT.md#updates) 停机并备份，修改两边的 `MMO_IMAGE_TAG`，先 `scene` 后 `gateway` 重建容器。保留原来的 `BACKEND_VOLUME_NAME`；镜像包与数据库备份是不同的文件，镜像不会携带玩家存档。
+新版本在本机构建新标签，上传、校验、加载后，按 [维护窗口更新步骤](GAME_AUTH_DEPLOYMENT.md) 停机并备份，修改两边的 `MMO_IMAGE_TAG`，先 `auth` 后 `game` 重建容器。保留原来的 `BACKEND_VOLUME_NAME`；镜像包与数据库备份是不同的文件，镜像不会携带玩家存档。
 
 运行后用以下命令观察实际资源使用：
 
