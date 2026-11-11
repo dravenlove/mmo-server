@@ -2,6 +2,7 @@
 """使用已有镜像执行隔离容器验收；不会连接或修改实际部署。"""
 import argparse
 import concurrent.futures
+import copy
 import json
 import os
 from pathlib import Path
@@ -22,7 +23,10 @@ parser.add_argument('--database', choices=('sqlite', 'mysql'), default='sqlite')
 parser.add_argument('--mysql-image', default='mysql:8.0', help='隔离测试使用的本地 MySQL 镜像')
 parser.add_argument('--combat', action='store_true', help='额外验收战斗、技能、死亡复活与战斗快照恢复')
 parser.add_argument('--hot-reload', action='store_true', help='额外验收在线配置热更、管理CLI与回滚；包含战斗检查')
+parser.add_argument('--external-auth', action='store_true', help='使用独立鉴权容器；需要 --database mysql')
 args = parser.parse_args()
+if args.external_auth and args.database != 'mysql':
+    parser.error('--external-auth requires --database mysql')
 args.combat = args.combat or args.hot_reload
 TAG = args.tag
 PREFIX = args.image_prefix.rstrip('/')
@@ -93,6 +97,19 @@ if args.database == 'mysql':
         'command': ['--max-connections=30', '--performance-schema=OFF', '--innodb-buffer-pool-size=67108864'],
         'healthcheck': {'test': ['CMD-SHELL', 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h127.0.0.1 -uroot -Nse "SELECT 1" >/dev/null'],
                         'interval': '2s', 'timeout': '5s', 'retries': 40, 'start_period': '10s'}}
+if args.external_auth:
+    auth_service = copy.deepcopy(config['services']['backend'])
+    auth_service.pop('ports', None)
+    auth_service.pop('volumes', None)
+    auth_service['command'] = ['-role', 'auth']
+    auth_service['depends_on'] = {'mysql': {'condition': 'service_healthy'}}
+    auth_service['environment'] = {key: value for key, value in auth_service['environment'].items()
+                                   if key.startswith('MYSQL_') or key == 'INTERNAL_TOKEN'}
+    auth_service['environment'].update(AUTH_LISTEN='0.0.0.0:8082', AUTH_DB_DRIVER='mysql')
+    auth_service['healthcheck']['test'] = ['CMD', 'curl', '--fail', '--silent', '--max-time', '2', 'http://127.0.0.1:8082/healthz']
+    config['services']['auth'] = auth_service
+    config['services']['backend']['environment']['AUTH_URL'] = 'http://auth:8082'
+    config['services']['backend']['depends_on']['auth'] = {'condition': 'service_healthy'}
 cfg = work / 'compose.json'
 cfg.write_text(json.dumps(config, indent=2), encoding='utf-8')
 compose = ['docker', 'compose', '-f', str(cfg), '-p', project]
@@ -153,6 +170,17 @@ try:
     b = bob.request('login', token=bob_auth['token'])
     assert {p['name'] for p in alice.request('view')['players']} == {'DockerAlice', 'DockerBob'}
     passed('TCP registration, login, unique names and AOI across containers')
+    if args.external_auth:
+        compose_ok('stop', 'auth')
+        new_peer().request('login', ok=False, token=auth['token'])
+        # 包含超过一次 Gateway 会话复核周期，确认在线链路不会继续调用 Auth。
+        time.sleep(1.2)
+        assert alice.request('view')['self']['role_id'] == a['role_id']
+        status, result = http(f'http://127.0.0.1:{ports["backend"]}/v1/session',
+                              {'role_id': a['role_id'], 'session_epoch': a['session_epoch']}, token)
+        assert status == 200, result
+        passed('Auth outage rejects new login without blocking existing view or session verification')
+        compose_ok('up', '-d', '--no-build', '--pull', 'never', '--wait', 'auth')
     alice.request('move', seq=1, dx=1, dy=0)
     time.sleep(0.4)
     moved = alice.request('view')['self']
@@ -238,6 +266,8 @@ try:
             time.sleep(1)
         else:
             raise AssertionError('Backend did not restart safely after the MySQL session was lost')
+        if args.external_auth:
+            compose_ok('up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '90', 'auth')
         recovered = cli([{'op': 'view'}, {'op': 'claim'}], 'cli-after-mysql-restart')
         assert recovered['view'][0]['scene_id'] == 'scene-2'
         assert recovered['claim'] == [{'coins': 100, 'granted': False}]
@@ -246,6 +276,8 @@ try:
     compose_ok('stop', 'backend')
     compose_ok('stop', 'scene1', 'scene2')
     if args.database == 'mysql':
+        if args.external_auth:
+            compose_ok('stop', 'auth')
         compose_ok('stop', 'mysql')
     compose_ok('up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '90')
     second = cli([{'op': 'view'}, {'op': 'claim'}], 'cli-after-restart')
@@ -257,7 +289,7 @@ try:
     names = compose_ok('ps', '-q').stdout.split()
     stats = run(['docker', 'stats', '--no-stream', '--format', '{{json .}}', *names])
     (work / 'stats.jsonl').write_text(stats.stdout, encoding='utf-8')
-    report = {'ok': True, 'image_tag': TAG, 'image_prefix': PREFIX, 'database': args.database, 'combat': args.combat, 'hot_reload': args.hot_reload, 'checks': checks, 'count': len(checks),
+    report = {'ok': True, 'image_tag': TAG, 'image_prefix': PREFIX, 'database': args.database, 'external_auth': args.external_auth, 'combat': args.combat, 'hot_reload': args.hot_reload, 'checks': checks, 'count': len(checks),
               'scope': 'Linux containers on one Docker engine; no real VPS network, TLS or capacity test'}
     (work / 'report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(f'PASS {len(checks)} Docker checks; report: {work / "report.json"}', flush=True)

@@ -43,6 +43,8 @@ type Config struct {
 	Scenes       map[string]string
 	DefaultScene string
 	HTTPClient   *http.Client
+	AuthURL      string
+	AuthClient   *http.Client
 }
 
 // MySQLConfig 使用独立字段，密码中的 @、:、/ 不会被当作连接串语法。

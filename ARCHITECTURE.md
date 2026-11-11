@@ -1,4 +1,6 @@
 Go + C++ MMO 分布式服务器架构草案
+
+> 当前两机实现已拆分为 **game（Gateway + Game Backend + Scenes）/ auth（账号注册与登录）**。职责、旧身份兼容及迁移步骤见 [GAME_AUTH_DEPLOYMENT.md](docs/GAME_AUTH_DEPLOYMENT.md)。下文包含长期扩展设计；分离鉴权模式由 `AUTH_URL` 启用，旧同机 demo 保留单体兼容路径。
 ================================
 
 设计日期：2026-11-03。本文描述长期架构目标；已补充可运行 MVP，实际实现范围、启动方式和验证结果见 [README](README.md) 与 [部署文档](docs/DEPLOYMENT.md)。MVP 使用 HTTP/JSON、TCP 客户端和单实例 Backend，可选 SQLite / 指定 MySQL，尚未实现本文所有设计，也不代表生产容量承诺。

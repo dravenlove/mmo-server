@@ -1,0 +1,31 @@
+name: mmo-auth
+
+services:
+  auth:
+    image: ${MMO_IMAGE_PREFIX:-ghcr.io/dravenlove/mmo-server}/backend:${MMO_IMAGE_TAG:?Set a published image tag}
+    command: ["-role", "auth"]
+    # Linux 主机网络用于访问 SSH 反向转发的本机 MySQL 端口。
+    network_mode: host
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 20s
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set the existing shared random INTERNAL_TOKEN}
+      AUTH_LISTEN: 127.0.0.1:8082
+      AUTH_DB_DRIVER: mysql
+      MYSQL_HOST: ${MYSQL_HOST:-127.0.0.1}
+      MYSQL_PORT: ${MYSQL_PORT:-13306}
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Set MYSQL_DATABASE}
+      MYSQL_TLS: ${MYSQL_TLS:-false}
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", "http://127.0.0.1:8082/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s

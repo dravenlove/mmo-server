@@ -122,8 +122,8 @@ def main():
             raise RuntimeError(f"Image {reference}: {actual} != {args.platform}")
         images.append({"reference": reference, "id": info["Id"], "platform": actual})
 
-    groups = {"mmo-gateway": [f"mmo/{name}:{args.tag}" for name in ("backend", "gateway", "client")],
-              "mmo-scene": [f"mmo/scene:{args.tag}"]}
+    groups = {"mmo-game": [f"mmo/{name}:{args.tag}" for name in ("backend", "gateway", "client", "scene")],
+              "mmo-auth": [f"mmo/backend:{args.tag}"]}
     archives = [export_images(output, name, refs, args.platform) for name, refs in groups.items()]
     manifest = {"schema_version": 1, "tag": args.tag, "platform": args.platform,
                 "source_revision": revision, "source_dirty": dirty,

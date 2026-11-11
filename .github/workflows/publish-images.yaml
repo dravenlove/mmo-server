@@ -61,6 +61,9 @@ jobs:
           python3 scripts/test_mysql.py
           python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql --hot-reload
 
+      - name: Verify separate authentication and game services
+        run: python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql --external-auth --hot-reload
+
       - name: Sign in to GitHub Container Registry
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

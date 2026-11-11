@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"mmo/internal/authsvc"
 	"mmo/internal/backend"
 )
 
@@ -22,11 +23,19 @@ func env(key, fallback string) string {
 }
 
 func main() {
+	roleFlag := flag.String("role", "game", "服务职责：game 或 auth")
 	driverFlag := flag.String("db-driver", env("BACKEND_DB_DRIVER", "sqlite"), "数据库类型：sqlite 或 mysql")
 	pathFlag := flag.String("db-path", env("BACKEND_DB", "data/mmo.db"), "SQLite 数据库文件")
 	hostFlag := flag.String("mysql-host", os.Getenv("MYSQL_HOST"), "MySQL 主机名或 IP，覆盖 MYSQL_HOST")
 	portFlag := flag.String("mysql-port", env("MYSQL_PORT", "3306"), "MySQL 端口，覆盖 MYSQL_PORT")
 	flag.Parse()
+	if *roleFlag == "auth" {
+		authsvc.Run()
+		return
+	}
+	if *roleFlag != "game" {
+		log.Fatal("role 只支持game或auth")
+	}
 	scenes, first, err := backend.ParseScenes(env("SCENES", "scene-1=http://127.0.0.1:9001,scene-2=http://127.0.0.1:9002"))
 	if err != nil {
 		log.Fatal(err)
@@ -43,6 +52,7 @@ func main() {
 	service, err := backend.New(backend.Config{
 		Token: os.Getenv("INTERNAL_TOKEN"), DBDriver: dbDriver,
 		DBPath: *pathFlag, Scenes: scenes, DefaultScene: first,
+		AuthURL: os.Getenv("AUTH_URL"),
 		MySQL: backend.MySQLConfig{Host: *hostFlag, Port: *portFlag,
 			User: os.Getenv("MYSQL_USER"), Password: password, Database: os.Getenv("MYSQL_DATABASE"),
 			TLS: env("MYSQL_TLS", "false")},

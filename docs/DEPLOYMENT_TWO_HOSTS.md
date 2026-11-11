@@ -1,5 +1,7 @@
 # 统一部署流程：gateway + scene + MySQL
 
+> 当前部署入口已更新为 [game 游戏主机 + auth 鉴权后台主机](GAME_AUTH_DEPLOYMENT.md)。本文保留旧拓扑说明；新离线镜像包为 `mmo-game`（全部游戏镜像）与 `mmo-auth`（backend 镜像以鉴权角色运行）。
+
 这份文档是两台应用 VPS 的部署入口。主流程使用已经发布的 Docker 镜像和已有 MySQL，VPS 只拉取、启动，不进行 Go/C++ 编译。
 
 需要测试保持连接时修改技能和怪物数值，按 [配置热更 Demo](CONFIG_HOT_RELOAD.md)先启用固定配置文件，再进行在线发布和回滚。

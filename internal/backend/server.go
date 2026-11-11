@@ -23,10 +23,11 @@ import (
 )
 
 type Server struct {
-	mu     sync.Mutex
-	db     *store
-	config Config
-	client *http.Client
+	mu         sync.Mutex
+	db         *store
+	config     Config
+	client     *http.Client
+	authClient *http.Client
 }
 
 func New(config Config) (*Server, error) {
@@ -52,6 +53,10 @@ func New(config Config) (*Server, error) {
 			return nil, err
 		}
 	}
+	authClient, err := newAuthClient(config)
+	if err != nil {
+		return nil, err
+	}
 	db, err := openStore(config)
 	if err != nil {
 		return nil, err
@@ -67,7 +72,7 @@ func New(config Config) (*Server, error) {
 			client.Timeout = defaultClient().Timeout
 		}
 	}
-	return &Server{db: db, config: config, client: client}, nil
+	return &Server{db: db, config: config, client: client, authClient: authClient}, nil
 }
 
 func (s *Server) Close() error {
@@ -105,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	for name, method := range methods {
 		handler := method
+		operation := name
 		mux.HandleFunc("/v1/"+name, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
 				writeError(w, &apiError{http.StatusMethodNotAllowed, "只允许 POST"})
@@ -120,9 +126,15 @@ func (s *Server) Handler() http.Handler {
 				writeError(w, bad("请求过大或读取失败"))
 				return
 			}
-			s.mu.Lock()
-			data, err := handler(r.Context(), body)
-			s.mu.Unlock()
+			var data any
+			if s.config.AuthURL != "" && (operation == "register" || operation == "login") {
+				// 跨地域鉴权 I/O 不持有游戏状态锁，不能阻塞在线会话和保存。
+				data, err = s.identityRequest(r.Context(), operation, body)
+			} else {
+				s.mu.Lock()
+				data, err = handler(r.Context(), body)
+				s.mu.Unlock()
+			}
 			if err != nil {
 				writeError(w, err)
 				return
@@ -238,13 +250,18 @@ func (s *Server) login(ctx context.Context, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = s.recoverRole(ctx, r.RoleID); err != nil {
+	return s.loginRole(ctx, r.RoleID)
+}
+
+// 调用方持有游戏状态锁；会话代次和场景归属始终由游戏侧管理。
+func (s *Server) loginRole(ctx context.Context, id string) (any, error) {
+	if err := s.recoverRole(ctx, id); err != nil {
 		return nil, err
 	}
-	if _, err = s.db.ExecContext(ctx, "UPDATE roles SET session_epoch=session_epoch+1 WHERE role_id=?", r.RoleID); err != nil {
+	if _, err := s.db.ExecContext(ctx, "UPDATE roles SET session_epoch=session_epoch+1 WHERE role_id=?", id); err != nil {
 		return nil, err
 	}
-	r, err = s.role(ctx, r.RoleID)
+	r, err := s.role(ctx, id)
 	if err != nil {
 		return nil, err
 	}

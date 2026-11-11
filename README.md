@@ -1,29 +1,31 @@
 # Go + C++ MMO 分布式服务器 MVP
 
-一个可分别部署的服务端原型：Go 网关承接玩家长连接，Go Backend 管理账号、场景归属和持久化，两个独立 C++ SceneHost 推进实时移动和 AOI。Linux Docker 是部署目标；同机 Compose 用于演示，多机模板位于 `deploy/`。
+一个可分别部署的服务端原型：Go 网关承接玩家长连接，Go Auth 管理账号，Game Backend 管理角色、场景归属和持久化，两个独立 C++ SceneHost 推进实时移动和 AOI。Linux Docker 是部署目标；同机 Compose 用于演示，多机模板位于 `deploy/`。
 
 公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。
 
 **战斗版本的玩法与两台 VPS 更新步骤见 [COMBAT.md](docs/COMBAT.md)，数值热更和在线回滚见 [配置热更 demo](docs/CONFIG_HOT_RELOAD.md)。Windows 测试已部署的服务器，优先使用 [桌面客户端](docs/DESKTOP_CLIENT.md)。** 构建后双击 `dist/desktop/MMO.Client.exe`，填写 gateway 地址，即可测试连接、登录、移动、战斗和切换场景；本机直接连接远程服务器。
 
-**两台 VPS 部署从这里开始：[统一部署流程：gateway + scene + MySQL](docs/DEPLOYMENT_TWO_HOSTS.md)。** 依次完成配置、拉取现成镜像、启动与验收；VPS 不需要编译 Go/C++。同一份文档也包含后续更新、停机、恢复和排错。
+**当前两机部署：[游戏主机 + 鉴权后台主机](docs/GAME_AUTH_DEPLOYMENT.md)。** 游戏主机集中运行 Gateway、游戏 Backend 和 C++ 场景；资源较少的鉴权后台主机只处理注册与登录。已有客户端继续连接游戏主机原地址；VPS 拉取现成镜像，不编译源码。[全国玩家连接延迟](docs/NATIONWIDE_LATENCY.md)说明单区、线路加速与多区服的取舍。
 
-| 主机角色 | 建议配置 | 运行内容 |
-| --- | --- | --- |
-| `gateway` | Ubuntu 24.04.4 LTS，2GB 内存 | Go Gateway + Go Backend，连接指定 MySQL |
-| `scene` | OpenCloudOS 9.6，4GB 内存 | 两个 C++ 场景容器 |
+| 主机角色 | 运行内容 |
+| --- | --- |
+| `game` | Go Gateway + Game Backend + 两个 C++ 场景，连接既有 MySQL |
+| `auth` | Go Auth，账号注册、凭据验证及旧账号导入 |
 
-已有旧命名部署按主指南中的迁移入口处理，继续保留原密钥与数据。[镜像发布](docs/REGISTRY_DEPLOYMENT.md)、[离线打包](docs/PREBUILT_IMAGES.md)和[MySQL 参数](docs/MYSQL.md)是按需查阅的补充。
+原来的 [gateway + scene 分机流程](docs/DEPLOYMENT_TWO_HOSTS.md)保留为旧拓扑参考。角色迁移保留原密钥、数据库、卷和战斗配置；不要同时启动新旧 Game Backend。
 
 ```mermaid
 flowchart LR
-    C[Windows 桌面 / 命令行客户端] -->|TCP 7000 / 可选 TLS| G[Go Gateway]
-    G -->|内部 HTTP| B[Go Backend]
-    G -->|移动 / AOI 查询| S1[C++ scene-1]
-    G -->|移动 / AOI 查询| S2[C++ scene-2]
-    B -->|入场 / 迁移协调| S1
-    B -->|入场 / 迁移协调| S2
-    B --> D[(SQLite / 指定 MySQL)]
+    C[桌面 / 命令行客户端] -->|TCP 7000 / 可选 TLS| G
+    subgraph GAME[游戏主机]
+        G[Gateway] --> B[Game Backend]
+        G --> S[C++ scene1 / scene2]
+        B --> S
+    end
+    B -->|仅注册 / 登录，经加密链路| A[鉴权后台主机 Auth]
+    B --> D[(既有 MySQL)]
+    A --> D
 ```
 
 现有玩法包括注册登录、权威移动、邻近玩家视图、场景切换、断线重连与一次性欢迎奖励，并新增 [PvE 战斗试炼场](docs/COMBAT.md)：四个近战技能、怪物追击反击、血蓝和冷却、死亡复活，以及重连/跨场景战斗快照。两个场景是独立进程，可以放在不同机器。
@@ -44,7 +46,7 @@ flowchart LR
 
 ## 本机启动
 
-本节会在**同一台机器**上构建并运行全部四个服务。Ubuntu + OpenCloudOS 两台 VPS 部署时，直接使用 [两机部署文档](docs/DEPLOYMENT_TWO_HOSTS.md) 的 `gateway`/`scene` 配置；VPS 按角色拉取已发布镜像并启动，不执行本节的构建命令。
+本节会在**同一台机器**上构建并运行全部四个服务。Ubuntu + OpenCloudOS 两台 VPS 部署时，直接使用 [两机部署文档](docs/GAME_AUTH_DEPLOYMENT.md) 的 `game`/`auth` 配置；VPS 按角色拉取已发布镜像并启动，不执行本节的构建命令。
 
 以下命令使用 Linux shell，要求 Docker Engine 运行中、支持 `docker compose`，并能拉取镜像、系统软件包和 Go 依赖。C++ 第三方头文件已随源码提供，构建场景时不再下载第三方源码。
 

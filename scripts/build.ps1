@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $binaryDirectory = if ($Configuration -eq 'Debug') { 'bin/debug' } else { 'bin' }
 New-Item -ItemType Directory -Force $binaryDirectory | Out-Null
-foreach ($service in @('backend', 'gateway', 'client')) {
+foreach ($service in @('backend', 'gateway', 'client', 'auth')) {
     $buildArguments = @('build')
     if ($Configuration -eq 'Debug') {
         # 保留源码路径，关闭优化和内联，方便断点和局部变量检查。
