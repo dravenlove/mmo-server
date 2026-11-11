@@ -7,7 +7,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 EnvironmentFile=/etc/mmo-auth-link/link.env
-ExecStart=/usr/bin/ssh -F /dev/null -N -T -o BatchMode=yes -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile=/etc/mmo-auth-link/known_hosts -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR -i /etc/mmo-auth-link/id_ed25519 -L ${GAME_PRIVATE_IP}:8082:127.0.0.1:8082 -R 127.0.0.1:13306:${MYSQL_PRIVATE_IP}:${MYSQL_PRIVATE_PORT} root@${AUTH_PUBLIC_IP}
+ExecStart=/usr/bin/ssh -F /dev/null -N -T -o BatchMode=yes -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile=/etc/mmo-auth-link/known_hosts -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR -i /etc/mmo-auth-link/id_ed25519 -L ${GAME_LINK_BIND_IP}:8082:127.0.0.1:8082 -R 127.0.0.1:13306:${MYSQL_PRIVATE_IP}:${MYSQL_PRIVATE_PORT} root@${AUTH_PUBLIC_IP}
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

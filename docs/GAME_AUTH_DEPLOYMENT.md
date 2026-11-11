@@ -62,10 +62,10 @@ test -f deploy/auth-host.env || (umask 077; cp deploy/auth-host.env.example depl
 
 | 入口 | 目标 | 用途 |
 | --- | --- | --- |
-| game 私网 IP `:8082` | auth `127.0.0.1:8082` | 游戏容器调用 Auth |
+| game Docker 网桥 IP `:8082` | auth `127.0.0.1:8082` | 游戏容器调用 Auth |
 | auth `127.0.0.1:13306` | game 可达的 MySQL 地址 `:3306` | Auth 经公网加密链路访问既有数据库 |
 
-MySQL 看到的来源仍为 game 主机；无需为 auth 的跨地域私网地址额外放开数据库。Auth 使用 Linux 主机网络，只监听回环地址；8082 与 13306 均不需要对公网开放。game 私网转发入口应只允许本机 Docker 容器访问，不作为对其他主机开放的接口。
+MySQL 看到的来源仍为 game 主机；无需为 auth 的跨地域私网地址额外放开数据库。Auth 使用 Linux 主机网络，只监听回环地址；8082 与 13306 均不需要对公网开放。game 的转发入口绑定本机 Docker 网桥 IP，不绑定云公网映射的私网网卡。以 `ip -4 addr show docker0` 确认实际地址，避免把 8082 暴露到公网。
 
 在 game 主机以 root 创建 `/etc/mmo-auth-link`，权限 `700`。生成专用 Ed25519 密钥，或迁移已有受限隧道密钥；私钥权限 `600`，只保留在 game 主机。把 auth 的 SSH 主机公钥通过已可信的管理连接写入 `known_hosts`，不要跳过主机身份验证。
 
@@ -78,7 +78,7 @@ from="203.0.113.10",restrict,port-forwarding,permitopen="127.0.0.1:8082",permitl
 game 上 `/etc/mmo-auth-link/link.env`：
 
 ```dotenv
-GAME_PRIVATE_IP=10.20.0.11
+GAME_LINK_BIND_IP=172.17.0.1
 AUTH_PUBLIC_IP=203.0.113.20
 MYSQL_PRIVATE_IP=10.20.0.33
 MYSQL_PRIVATE_PORT=3306
@@ -96,7 +96,7 @@ sudo systemctl is-active mmo-auth-link.service
 
 ## 4. 配置与启动
 
-game 环境文件填写真实 `GATEWAY_BIND_IP`、`AUTH_URL=http://游戏主机私网IP:8082` 和原 MySQL 参数。场景地址固定为同一 Docker 网络的 `scene1:9001` / `scene2:9002`；不再经过跨机 SSH 或云联网。
+game 环境文件填写真实 `GATEWAY_BIND_IP`、`AUTH_URL=http://游戏主机Docker网桥IP:8082` 和原 MySQL 参数。场景地址固定为同一 Docker 网络的 `scene1:9001` / `scene2:9002`；不再经过跨机 SSH 或云联网。
 
 auth 环境文件默认 `MYSQL_HOST=127.0.0.1`、`MYSQL_PORT=13306`，其余数据库名、账号、密码与既有数据库一致。`INTERNAL_TOKEN` 与 game 相同。Auth 使用独立数据库命名锁，不能同时启动两个 Auth 写入同一个库；Game Backend 也只允许一个写入者。
 
