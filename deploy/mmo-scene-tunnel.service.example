@@ -1,0 +1,22 @@
+[Unit]
+Description=MMO encrypted transport to Scene
+Wants=network-online.target
+After=network-online.target docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/mmo-scene-tunnel/tunnel.env
+ExecStart=/usr/bin/ssh -F /dev/null -N -T -o BatchMode=yes -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o UserKnownHostsFile=/etc/mmo-scene-tunnel/known_hosts -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o LogLevel=ERROR -i /etc/mmo-scene-tunnel/id_ed25519 -L ${TUNNEL_BIND_IP}:9001:${SCENE_PRIVATE_IP}:9001 -L ${TUNNEL_BIND_IP}:9002:${SCENE_PRIVATE_IP}:9002 root@${SCENE_PUBLIC_IP}
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

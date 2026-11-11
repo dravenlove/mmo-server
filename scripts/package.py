@@ -20,7 +20,7 @@ files.append(root / "scene/CMakeLists.txt")
 files.extend(p for p in (root / "desktop").rglob("*")
              if p.is_file() and p.suffix in (".cs", ".csproj", ".xaml")
              and "bin" not in p.parts and "obj" not in p.parts)
-files.extend(p for p in (root / "deploy").iterdir() if p.is_file() and (p.name.endswith(".compose.yaml") or p.name.endswith(".env.example")))
+files.extend(p for p in (root / "deploy").iterdir() if p.is_file() and p.name.endswith((".compose.yaml", ".env.example", ".service.example")))
 files = sorted(set(files), key=lambda p: p.relative_to(root).as_posix())
 output = root / "dist"
 output.mkdir(exist_ok=True)
