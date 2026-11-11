@@ -133,4 +133,4 @@ services:
 
 volumes:
   backend-data:
-    name: mmo-game-backend-data
+    name: ${BACKEND_VOLUME_NAME:-mmo-two-host-backend-data}
