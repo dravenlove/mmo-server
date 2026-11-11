@@ -140,3 +140,60 @@ func TestSlowViewDoesNotBlockFourMovementInputsAndDisconnectSavesFinalPosition(t
 		t.Fatal("final checkpoint missing")
 	}
 }
+
+func TestPeerDisconnectDoesNotCancelAnInFlightDatabaseSave(t *testing.T) {
+	role := Role{ID: "save", Name: "save", Scene: "scene-1", Owner: 1, Session: 1}
+	scene := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"accepted": true, "role": role})
+	}))
+	defer scene.Close()
+	started, release, cancelled := make(chan struct{}), make(chan struct{}), make(chan struct{}, 4)
+	var startOnce, releaseOnce sync.Once
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/checkpoint" {
+			startOnce.Do(func() { close(started) })
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				cancelled <- struct{}{}
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			return
+		}
+		json.NewEncoder(w).Encode(Route{Role: role, URL: scene.URL})
+	}))
+	defer backend.Close()
+	defer releaseOnce.Do(func() { close(release) })
+	server, _ := New(Config{Token: strings.Repeat("s", 32), BackendURL: backend.URL})
+	left, right := net.Pipe()
+	defer right.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); server.serveConn(ctx, left) }()
+	right.SetDeadline(time.Now().Add(3 * time.Second))
+	json.NewEncoder(right).Encode(Request{ID: "login", Op: "login", Token: "test"})
+	var response Response
+	if err := json.NewDecoder(right).Decode(&response); err != nil || !response.OK {
+		t.Fatalf("login: %v", err)
+	}
+	json.NewEncoder(right).Encode(Request{ID: "cast", Op: "cast", Seq: 1, SkillID: "whirlwind"})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("save did not start")
+	}
+	right.Close()
+	select {
+	case <-cancelled:
+		t.Fatal("closing the browser cancelled the database operation")
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("connection did not finish its save")
+	}
+}

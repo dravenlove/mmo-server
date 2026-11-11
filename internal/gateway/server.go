@@ -334,6 +334,8 @@ func (s *Server) checkpoint(ctx context.Context, r Route, v *View) {
 
 func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 	defer c.Close()
+	// 浏览器断开只取消场景 I/O；已发出的数据库事务继续完成，避免取消 MySQL 固定会话。
+	serviceCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan struct{})
@@ -520,7 +522,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				resp.Data = data
 			case "register":
 				var out map[string]any
-				err = s.call(ctx, s.cfg.BackendURL, "/v1/register", map[string]any{"name": req.Name}, &out)
+				err = s.call(serviceCtx, s.cfg.BackendURL, "/v1/register", map[string]any{"name": req.Name}, &out)
 				resp.Data = out
 			case "login":
 				if route != nil {
@@ -528,12 +530,12 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					break
 				}
 				var out Route
-				err = s.call(ctx, s.cfg.BackendURL, "/v1/login", map[string]any{"token": req.Token}, &out)
+				err = s.call(serviceCtx, s.cfg.BackendURL, "/v1/login", map[string]any{"token": req.Token}, &out)
 				if err == nil && s.cfg.LoginScene != "" && out.Role.Scene != s.cfg.LoginScene {
 					payload := ref(out.Role)
 					payload["target_scene_id"] = s.cfg.LoginScene
 					payload["request_id"] = fmt.Sprintf("entry-%s-%d", out.Role.ID, out.Role.Session)
-					err = s.call(ctx, s.cfg.BackendURL, "/v1/transfer", payload, &out)
+					err = s.call(serviceCtx, s.cfg.BackendURL, "/v1/transfer", payload, &out)
 				}
 				if err == nil {
 					route = &out
@@ -568,7 +570,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 						if snapshot, valid := actionSnapshot(out, *route, lastView); valid {
 							lastView = snapshot
 							// 持久化失败只记录日志，不能把已成功的结算伪装成未执行。
-							s.checkpoint(ctx, *route, lastView)
+							s.checkpoint(serviceCtx, *route, lastView)
 						}
 					}
 					resp.Data = out
@@ -590,7 +592,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					p["request_id"] = req.RequestID
 					var out Route
 					moveBarrier.Lock()
-					err = s.call(ctx, s.cfg.BackendURL, "/v1/transfer", p, &out)
+					err = s.call(serviceCtx, s.cfg.BackendURL, "/v1/transfer", p, &out)
 					if err == nil {
 						route = &out
 						lastView = nil
@@ -603,7 +605,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 						Coins   int64 `json:"coins"`
 						Granted bool  `json:"granted"`
 					}
-					err = s.call(ctx, s.cfg.BackendURL, "/v1/claim", map[string]any{"role_id": route.Role.ID, "session_epoch": route.Role.Session}, &out)
+					err = s.call(serviceCtx, s.cfg.BackendURL, "/v1/claim", map[string]any{"role_id": route.Role.ID, "session_epoch": route.Role.Session}, &out)
 					if err == nil {
 						route.Role.Coins = out.Coins
 						resp.Data = out
@@ -627,7 +629,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 			if !now.Before(nextSession) {
 				nextSession = now.Add(time.Second)
 				var current Route
-				cctx, ccancel := context.WithTimeout(ctx, 3*time.Second)
+				cctx, ccancel := context.WithTimeout(serviceCtx, 3*time.Second)
 				err := s.call(cctx, s.cfg.BackendURL, "/v1/session", map[string]any{"role_id": route.Role.ID, "session_epoch": route.Role.Session}, &current)
 				ccancel()
 				if err != nil {
@@ -666,7 +668,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 			}
 			if !now.Before(nextSave) {
 				nextSave = now.Add(2 * time.Second)
-				s.checkpoint(ctx, *route, lastView)
+				s.checkpoint(serviceCtx, *route, lastView)
 			}
 		}
 	}
