@@ -1,4 +1,5 @@
 #include "scene.hpp"
+#include <iostream>
 
 #include <algorithm>
 #include <array>
@@ -251,10 +252,21 @@ void Scene::ensure_tracked(const std::string& role_id) {
     }
 }
 
+std::size_t Scene::occupied_count() const {
+    std::size_t count=0;
+    for (const auto& pair:entities_) if (pair.second.mode!=Mode::Active || (pair.second.connected && pair.second.lease_age<=3)) ++count;
+    return count;
+}
+std::size_t Scene::player_count() const {
+    std::size_t count=0;
+    for (const auto& pair:entities_) if (pair.second.mode==Mode::Active && pair.second.connected && pair.second.lease_age<=3) ++count;
+    return count;
+}
+
 void Scene::admit(const Role& role) {
     ensure_tracked(role.role_id);
     if (role.owner_epoch <= removed_epochs_.at(role.role_id)) throw Error(409, "removed owner epoch");
-    if (entities_.size() >= config_.max_players) throw Error(503, "scene player capacity exhausted");
+    if (occupied_count() >= config_.max_players) throw Error(503, "scene player capacity exhausted");
 }
 
 Scene::Entity& Scene::matching(const Json& request, bool active_only) {
@@ -266,7 +278,7 @@ Scene::Entity& Scene::matching(const Json& request, bool active_only) {
     auto& entity = it->second;
     if (entity.role.owner_epoch != owner || entity.role.session_epoch != session)
         throw Error(409, "stale role reference");
-    if (active_only && entity.mode != Mode::Active) throw Error(409, "role is not active");
+    if (active_only && (entity.mode != Mode::Active || !entity.connected)) throw Error(409, "role is not active");
     return entity;
 }
 
@@ -278,7 +290,10 @@ Json Scene::enter(const Json& request) {
         if (entity.mode != Mode::Active) throw Error(409, "role is frozen or prepared");
         if (role.owner_epoch != entity.role.owner_epoch || role.session_epoch < entity.role.session_epoch)
             throw Error(409, "owner or session conflict");
+        if (role.session_epoch == entity.role.session_epoch && !entity.connected) throw Error(409, "disconnected session; log in again");
         if (role.session_epoch > entity.role.session_epoch) {
+            if ((!entity.connected || entity.lease_age>3) && occupied_count()>=config_.max_players) throw Error(503,"scene player capacity exhausted");
+            entity.connected = true;
             entity.role.session_epoch = role.session_epoch;
             entity.role.coins = role.coins;
             entity.role.name = role.name;
@@ -287,7 +302,7 @@ Json Scene::enter(const Json& request) {
             changed(entity.role.combat);
             entity.last_action_key.clear();
             entity.last_action_result = Json();
-            entity.last_seq = 0;
+            entity.last_seq = entity.applied_seq = 0;
             entity.dx = entity.dy = 0;
             entity.input_age = 1;
             entity.cancelled_transfers.clear();
@@ -388,17 +403,39 @@ Json Scene::execute(const std::string& path, const Json& request) {
         return {{"accepted", true}};
     }
 
+    if (path == "/v1/disconnect") {
+        auto& entity = matching(request);
+        if (entity.mode != Mode::Active) throw Error(409,"role is not active");
+        entity.connected=false; entity.dx=entity.dy=0; entity.input_age=1;
+        return {{"role",entity.role.json()}};
+    }
+    if (path == "/v1/move_batch") {
+        if (!request.contains("inputs") || !request["inputs"].is_array() || request["inputs"].empty() || request["inputs"].size()>4) throw Error(400,"movement batch needs 1..4 inputs");
+        Json results=Json::array();
+        for (const auto& input : request["inputs"]) {
+            if (!input.is_object()) {results.push_back({{"ok",false},{"error","invalid input"}});continue;}
+            auto item=input;
+            // 身份仅来自网关绑定的会话，不允许批内记录覆盖。
+            for (auto key : {"role_id","owner_epoch","session_epoch"}) item[key]=request.at(key);
+            try {results.push_back({{"ok",true},{"data",execute("/v1/move",item)}});}
+            catch (const Error& error) {results.push_back({{"ok",false},{"error",error.what()}});}
+            catch (const Json::exception&) {results.push_back({{"ok",false},{"error","invalid input fields"}});}
+        }
+        return {{"results",results}};
+    }
+    if (!config_.combat_enabled && (path=="/v1/cast" || path=="/v1/revive")) throw Error(409,"combat is disabled in this scene");
     auto& entity = matching(request, path == "/v1/move" || path == "/v1/view" || path == "/v1/cast" || path == "/v1/revive");
     if (path == "/v1/cast") return cast(entity, request);
     if (path == "/v1/revive") return revive(entity, request);
     if (path == "/v1/move") {
-        if (entity.role.combat.dead) throw Error(409, "dead players cannot move; revive first");
+        if (config_.combat_enabled && entity.role.combat.dead) throw Error(409, "dead players cannot move; revive first");
         auto seq = integer_field(request, "seq");
         double dx = real_field(request, "dx", 1), dy = real_field(request, "dy", 1);
         if (seq <= entity.last_seq) throw Error(409, "input sequence must increase");
         double length = std::hypot(dx, dy);
         if (length > 1) { dx /= length; dy /= length; }
         entity.last_seq = seq;
+        entity.trace_id = request.contains("trace_id") && request["trace_id"].is_string() ? request["trace_id"].get<std::string>().substr(0,64) : "";
         entity.dx = dx;
         entity.dy = dy;
         entity.input_age = 0;
@@ -451,14 +488,18 @@ void Scene::step(double dt) {
         auto& entity = pair.second;
         if (entity.mode != Mode::Active) continue;
         entity.lease_age = std::min(4.0, entity.lease_age + dt);
-        step_combat(entity, dt);
+        if (config_.combat_enabled) step_combat(entity, dt);
         // 输入失联后最多继续移动 250ms，避免网关断开留下无限移动角色。
-        double elapsed = std::min(dt, std::max(0.0, 0.25 - entity.input_age));
+        double elapsed = entity.connected ? std::min(dt, std::max(0.0, 0.25 - entity.input_age)) : 0;
         entity.role.x = std::clamp(entity.role.x + entity.dx * config_.move_speed * elapsed, -100.0, 100.0);
         entity.role.y = std::clamp(entity.role.y + entity.dy * config_.move_speed * elapsed, -100.0, 100.0);
         entity.input_age = std::min(1.0, entity.input_age + dt);
+        if (entity.last_seq!=entity.applied_seq) {
+            entity.applied_seq=entity.last_seq;
+            if (config_.trace_movement) std::cout<<Json{{"phase","direction_applied"},{"id",entity.trace_id},{"seq",entity.last_seq},{"tick",tick_},{"scene_id",config_.scene_id},{"x",entity.role.x},{"y",entity.role.y}}.dump()<<std::endl;
+        }
     }
-    step_npcs(dt);
+    if (config_.combat_enabled) step_npcs(dt);
 }
 
 Json Scene::view(Entity& entity) {
@@ -479,15 +520,23 @@ Json Scene::view(Entity& entity) {
         {"scene_id", config_.scene_id}, {"mobs", mobs}, {"skills", catalog}, {"events", events},
         {"config_version", combat_config_["version"]}, {"config_generation", config_generation_},
         {"config_applied_tick", config_applied_tick_}};
+    if (!config_.combat_enabled) {
+        result["self"].erase("combat"); result.erase("mobs"); result.erase("skills"); result.erase("events");
+    }
     // 为自身和元数据预留空间；极端长名字、满员 AOI 也不超过客户端 64KiB 帧上限。
     std::size_t used = result.dump(-1, ' ', true).size() + entity.role.json(false).dump(-1, ' ', true).size() + 1;
-    std::size_t visible_count = 0;
+    auto self_summary=entity.role.json(false);
+    if (!config_.combat_enabled) self_summary.erase("combat");
+    players.push_back(std::move(self_summary));
+    std::size_t visible_count = 1;
     bool truncated = false;
     for (const auto& pair : entities_) {
         const auto& other = pair.second;
-        if (other.mode != Mode::Active || !visible(other.role.x, other.role.y)) continue;
+        if (other.role.role_id==entity.role.role_id || other.mode != Mode::Active || !other.connected || other.lease_age>3 || !visible(other.role.x, other.role.y)) continue;
         ++visible_count;
         auto summary = other.role.json(false);
+        if (!config_.combat_enabled) summary.erase("combat");
+        if (players.size()>=128) {truncated=true;continue;}
         if (other.role.role_id != entity.role.role_id) {
             const auto size = summary.dump(-1, ' ', true).size() + 1;
             if (used + size > 60 * 1024) { truncated = true; continue; }
@@ -674,7 +723,7 @@ void Scene::step_npcs(double dt) {
         if (npc.target_id.empty()) continue;
         auto target = entities_.find(npc.target_id);
         if (target == entities_.end() || target->second.mode != Mode::Active ||
-            target->second.role.combat.dead || target->second.lease_age > 3 ||
+            target->second.role.combat.dead || !target->second.connected || target->second.lease_age > 3 ||
             std::hypot(npc.x - npc.spawn_x, npc.y - npc.spawn_y) > 24 ||
             std::hypot(npc.x - target->second.role.x, npc.y - target->second.role.y) > 24) {
             reset_npc(npc);

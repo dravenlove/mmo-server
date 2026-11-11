@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -20,7 +21,7 @@ import (
 func TestGatewayRoutesAndRejectsUnauthenticatedInput(t *testing.T) {
 	key := strings.Repeat("a", 32)
 	role := Role{ID: "role-a", Name: "alice", Scene: "scene-1", Owner: 1, Session: 2, Coins: 100}
-	sceneCalls := 0
+	var sceneCalls atomic.Int64
 	scene := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Internal-Token") != key {
 			t.Error("missing internal credential")
@@ -30,7 +31,7 @@ func TestGatewayRoutesAndRejectsUnauthenticatedInput(t *testing.T) {
 		if p["role_id"] != "role-a" || p["session_epoch"] != float64(2) {
 			t.Errorf("wrong routed identity: %v", p)
 		}
-		sceneCalls++
+		sceneCalls.Add(1)
 		if r.URL.Path == "/v1/view" {
 			json.NewEncoder(w).Encode(View{Self: role, Players: []Role{role}, Scene: "scene-1", Tick: 1})
 		} else {
@@ -100,7 +101,7 @@ func TestGatewayRoutesAndRejectsUnauthenticatedInput(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("connection did not stop")
 	}
-	if sceneCalls == 0 {
+	if sceneCalls.Load() == 0 {
 		t.Fatal("scene not reached")
 	}
 }

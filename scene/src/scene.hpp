@@ -23,6 +23,8 @@ struct Config {
     double move_speed = 6;
     std::size_t max_players = 128;
     std::size_t max_tracked_roles = 8192;
+    bool combat_enabled = true;
+    bool trace_movement = false;
     Json combat_config; // 未设置时使用内置数值；启动文件由 HTTP 外层读取。
 };
 
@@ -48,7 +50,7 @@ public:
     explicit Scene(Config config);
     Json execute(const std::string& path, const Json& request);
     void step(double dt);
-    std::size_t player_count() const { return entities_.size(); }
+    std::size_t player_count() const;
     std::uint64_t tick() const { return tick_; }
 
 private:
@@ -58,9 +60,11 @@ private:
         Mode mode = Mode::Active;
         std::string transfer_id;
         std::set<std::string> cancelled_transfers;
-        std::int64_t last_seq = 0;
+        std::int64_t last_seq = 0, applied_seq = 0;
+        std::string trace_id;
         double dx = 0, dy = 0, input_age = 1;
         double lease_age = 0;
+        bool connected = true;
         std::string last_action_key;
         Json last_action_result;
     };
@@ -93,6 +97,7 @@ private:
     Json enter(const Json& request);
     Json prepare(const Json& request);
     Json view(Entity& entity);
+    std::size_t occupied_count() const;
     Json cast(Entity& entity, const Json& request);
     Json revive(Entity& entity, const Json& request);
     Json config_status() const;

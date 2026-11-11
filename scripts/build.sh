@@ -2,7 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 mkdir -p bin
-for service in backend gateway client auth; do
+for service in backend gateway client auth websocket-bridge; do
   CGO_ENABLED=0 go build -trimpath -o "bin/$service" "./cmd/$service"
 done
 cmake -S scene -B build/scene -DCMAKE_BUILD_TYPE=Release

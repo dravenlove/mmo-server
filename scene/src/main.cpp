@@ -87,6 +87,7 @@ struct Command {
     std::string path;
     mmo::Json request;
     std::promise<Result> promise;
+    std::chrono::steady_clock::time_point queued_at;
 };
 
 class Runtime {
@@ -99,6 +100,7 @@ public:
         command->path = path;
         command->request = std::move(request);
         auto response = command->promise.get_future();
+        command->queued_at=std::chrono::steady_clock::now();
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (queue_.size() >= 512) return {503, {{"error", "scene command queue full"}}};
@@ -111,7 +113,7 @@ public:
 
     mmo::Json health() const {
         return {{"ok", true}, {"scene_id", config_.scene_id},
-                {"tick", tick_.load()}, {"players", players_.load()}};
+                {"tick", tick_.load()}, {"players", players_.load()}, {"mode",config_.combat_enabled?"combat":"movement"}};
     }
 
 private:
@@ -145,6 +147,22 @@ private:
                 catch (const std::exception& e) {
                     std::cerr << "scene command failed: " << e.what() << '\n';
                     result = {500, {{"error", "scene internal error"}}};
+                }
+                if (environment("TRACE_MOVEMENT","false")=="true" && (command->path=="/v1/move" || command->path=="/v1/move_batch" || command->path=="/v1/view")) {
+                    const auto elapsed=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-command->queued_at).count();
+                    mmo::Json trace{{"phase",command->path=="/v1/view"?"snapshot_generated":"direction_accepted"},{"scene_id",config_.scene_id},{"tick",scene_.tick()},{"next_simulation_tick",scene_.tick()+1},{"queue_and_work_us",elapsed},{"status",result.status}};
+                    if (command->request.contains("trace_id")) trace["id"]=command->request["trace_id"];
+                    if (command->request.contains("seq")) trace["seq"]=command->request["seq"];
+                    if (command->request.contains("inputs")) {
+                        trace["inputs"]=mmo::Json::array();
+                        for (const auto& input:command->request["inputs"]) {
+                            mmo::Json metadata=mmo::Json::object();
+                            if(input.is_object()&&input.contains("trace_id")&&input["trace_id"].is_string())metadata["id"]=input["trace_id"];
+                            if(input.is_object()&&input.contains("seq")&&input["seq"].is_number_integer())metadata["seq"]=input["seq"];
+                            trace["inputs"].push_back(metadata);
+                        }
+                    }
+                    std::cout<<trace.dump()<<std::endl;
                 }
                 command->promise.set_value(std::move(result));
             }
@@ -181,6 +199,10 @@ int main(int argc, char** argv) {
         mmo::Config config;
         config.scene_id = environment("SCENE_ID", "scene-1");
         if (config.scene_id.empty() || config.scene_id.size() > 128) throw std::runtime_error("invalid SCENE_ID");
+        const auto mode=environment("SCENE_MODE", "combat");
+        if (mode!="combat" && mode!="movement") throw std::invalid_argument("SCENE_MODE must be combat or movement");
+        config.combat_enabled=mode=="combat";
+        config.trace_movement=environment("TRACE_MOVEMENT","false")=="true";
         config.tick_hz = integer_env("TICK_HZ", "20", 1, 120);
         config.aoi_radius = number_env("AOI_RADIUS", "30", 1, 1000);
         config.move_speed = number_env("MOVE_SPEED", "6", 0.01, 100);
@@ -215,7 +237,7 @@ int main(int argc, char** argv) {
             reply(response, 200, runtime.health());
         });
 
-        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/view", "/v1/cast", "/v1/revive", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove",
+        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/move_batch", "/v1/disconnect", "/v1/view", "/v1/cast", "/v1/revive", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove",
                 "/v1/config/status", "/v1/config/reload", "/v1/config/apply", "/v1/config/validate"}) {
             server.Post(path, [&, path](const httplib::Request& request, httplib::Response& response) {
                 if (!token_matches(request.get_header_value("X-Internal-Token"), token)) {

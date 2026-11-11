@@ -2,6 +2,8 @@
 
 一个可分别部署的服务端原型：Go 网关承接玩家长连接，Go Auth 管理账号，Game Backend 管理角色、场景归属和持久化，两个独立 C++ SceneHost 推进实时移动和 AOI。Linux Docker 是部署目标；同机 Compose 用于演示，多机模板位于 `deploy/`。
 
+Unity WebGL 的移动与 AOI 接入见 [服务端交接协议](docs/WEBGL_MOVEMENT_HANDOFF.md)，提供独立无战斗场景和 WSS 入口。原桌面战斗入口继续保留。
+
 公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。
 
 **战斗版本的玩法与两台 VPS 更新步骤见 [COMBAT.md](docs/COMBAT.md)，数值热更和在线回滚见 [配置热更 demo](docs/CONFIG_HOT_RELOAD.md)。Windows 测试已部署的服务器，优先使用 [桌面客户端](docs/DESKTOP_CLIENT.md)。** 构建后双击 `dist/desktop/MMO.Client.exe`，填写 gateway 地址，即可测试连接、登录、移动、战斗和切换场景；本机直接连接远程服务器。

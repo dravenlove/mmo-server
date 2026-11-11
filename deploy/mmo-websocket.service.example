@@ -1,0 +1,22 @@
+[Unit]
+Description=MMO WebSocket game entrance
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/mmo-websocket
+EnvironmentFile=/etc/mmo-websocket.env
+ExecStart=/opt/mmo-websocket/websocket-bridge
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

@@ -24,6 +24,7 @@ parser.add_argument('--mysql-image', default='mysql:8.0', help='隔离测试使�
 parser.add_argument('--combat', action='store_true', help='额外验收战斗、技能、死亡复活与战斗快照恢复')
 parser.add_argument('--hot-reload', action='store_true', help='额外验收在线配置热更、管理CLI与回滚；包含战斗检查')
 parser.add_argument('--external-auth', action='store_true', help='使用独立鉴权容器；需要 --database mysql')
+parser.add_argument('--webgl', action='store_true', help='增加独立移动场景及真实 WebSocket 双角色检查')
 args = parser.parse_args()
 if args.external_auth and args.database != 'mysql':
     parser.error('--external-auth requires --database mysql')
@@ -110,6 +111,20 @@ if args.external_auth:
     config['services']['auth'] = auth_service
     config['services']['backend']['environment']['AUTH_URL'] = 'http://auth:8082'
     config['services']['backend']['depends_on']['auth'] = {'condition': 'service_healthy'}
+if args.webgl:
+    ports['webgl'] = free_port()
+    web_scene = copy.deepcopy(config['services']['scene1'])
+    web_scene.pop('ports', None)
+    web_scene['environment'].update(SCENE_ID='scene-webgl', SCENE_PORT='9003', SCENE_MODE='movement')
+    web_scene['environment'].pop('COMBAT_CONFIG_FILE', None)
+    config['services']['scene-webgl'] = web_scene
+    backend = config['services']['backend']
+    backend['environment']['SCENES'] += ',scene-webgl=http://scene-webgl:9003'
+    backend['depends_on']['scene-webgl'] = {'condition': 'service_healthy'}
+    web_gate = copy.deepcopy(config['services']['gateway'])
+    web_gate['environment'].update(GATEWAY_PROFILE='movement', GATEWAY_LOGIN_SCENE='scene-webgl')
+    web_gate['ports'] = [{'target': 7000, 'published': str(ports['webgl']), 'host_ip': '127.0.0.1', 'protocol': 'tcp'}]
+    config['services']['gateway-webgl'] = web_gate
 cfg = work / 'compose.json'
 cfg.write_text(json.dumps(config, indent=2), encoding='utf-8')
 compose = ['docker', 'compose', '-f', str(cfg), '-p', project]
@@ -170,6 +185,12 @@ try:
     b = bob.request('login', token=bob_auth['token'])
     assert {p['name'] for p in alice.request('view')['players']} == {'DockerAlice', 'DockerBob'}
     passed('TCP registration, login, unique names and AOI across containers')
+    if args.webgl:
+        child_env['MMO_TEST_MOVEMENT_GATEWAY'] = '127.0.0.1:' + str(ports['webgl'])
+        web_check = run(['go', 'test', './internal/wsbridge', '-run', '^TestMovementWorldIntegration$', '-count=1', '-v', '-timeout', '90s'], timeout=100)
+        (work / 'webgl.log').write_text(web_check.stdout + web_check.stderr, encoding='utf-8')
+        if web_check.returncode: raise AssertionError(web_check.stdout + web_check.stderr)
+        passed('WebSocket two-player movement, bounded inputs, AOI, reconnect and disconnect in isolated movement world')
     if args.external_auth:
         compose_ok('stop', 'auth')
         new_peer().request('login', ok=False, token=auth['token'])
@@ -221,8 +242,10 @@ try:
         def combat_restart():
             close_peers()
             compose_ok('stop', 'gateway')
+            if args.webgl: compose_ok('stop', 'gateway-webgl')
             compose_ok('stop', 'backend')
             compose_ok('stop', 'scene1', 'scene2')
+            if args.webgl: compose_ok('stop', 'scene-webgl')
             compose_ok('up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '90')
 
         run_checks(new_peer, passed, combat_checkpoint, combat_restart)
@@ -273,8 +296,10 @@ try:
         assert recovered['claim'] == [{'coins': 100, 'granted': False}]
         passed('MySQL restart fences the lost connection and automatically restarts Backend with the original data')
     compose_ok('stop', 'gateway')
+    if args.webgl: compose_ok('stop', 'gateway-webgl')
     compose_ok('stop', 'backend')
     compose_ok('stop', 'scene1', 'scene2')
+    if args.webgl: compose_ok('stop', 'scene-webgl')
     if args.database == 'mysql':
         if args.external_auth:
             compose_ok('stop', 'auth')

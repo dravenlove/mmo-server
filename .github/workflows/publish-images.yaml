@@ -44,6 +44,7 @@ jobs:
         run: |
           go test ./...
           go vet ./...
+          go test -race ./internal/gateway ./internal/wsbridge
           cmake -S scene -B build/scene-ci -DCMAKE_BUILD_TYPE=Release
           cmake --build build/scene-ci --parallel 2
           ctest --test-dir build/scene-ci --output-on-failure
@@ -62,7 +63,7 @@ jobs:
           python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql --hot-reload
 
       - name: Verify separate authentication and game services
-        run: python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql --external-auth --hot-reload
+        run: python3 scripts/smoke_docker.py --tag "$IMAGE_TAG" --database mysql --external-auth --hot-reload --webgl
 
       - name: Sign in to GitHub Container Registry
         env:

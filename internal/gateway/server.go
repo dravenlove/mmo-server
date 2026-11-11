@@ -50,17 +50,19 @@ type View struct {
 	ConfigAppliedTick  uint64          `json:"config_applied_tick,omitempty"`
 }
 type Request struct {
-	ID        string  `json:"id"`
-	Op        string  `json:"op"`
-	Name      string  `json:"name,omitempty"`
-	Token     string  `json:"token,omitempty"`
-	Seq       int64   `json:"seq,omitempty"`
-	DX        float64 `json:"dx,omitempty"`
-	DY        float64 `json:"dy,omitempty"`
-	Target    string  `json:"target_scene_id,omitempty"`
-	RequestID string  `json:"request_id,omitempty"`
-	SkillID   string  `json:"skill_id,omitempty"`
-	TargetID  string  `json:"target_id,omitempty"`
+	ID              string  `json:"id"`
+	Op              string  `json:"op"`
+	Name            string  `json:"name,omitempty"`
+	Token           string  `json:"token,omitempty"`
+	Seq             int64   `json:"seq,omitempty"`
+	DX              float64 `json:"dx,omitempty"`
+	DY              float64 `json:"dy,omitempty"`
+	Target          string  `json:"target_scene_id,omitempty"`
+	RequestID       string  `json:"request_id,omitempty"`
+	SkillID         string  `json:"skill_id,omitempty"`
+	TargetID        string  `json:"target_id,omitempty"`
+	receivedAt      time.Time
+	validationError string
 }
 type Response struct {
 	ID    string `json:"id,omitempty"`
@@ -69,7 +71,11 @@ type Response struct {
 	Data  any    `json:"data,omitempty"`
 	Error string `json:"error,omitempty"`
 }
-type Config struct{ Listen, HealthListen, BackendURL, Token, CertFile, KeyFile string }
+type Config struct {
+	Listen, HealthListen, BackendURL, Token, CertFile, KeyFile string
+	Profile, LoginScene                                        string
+	TraceMovement                                              bool
+}
 type Server struct {
 	cfg         Config
 	client      *http.Client
@@ -92,9 +98,18 @@ func env(key, fallback string) string {
 	return fallback
 }
 func FromEnv() (*Server, error) {
-	return New(Config{Listen: env("GATEWAY_LISTEN", "127.0.0.1:7000"), HealthListen: env("GATEWAY_HEALTH_LISTEN", "127.0.0.1:8080"), BackendURL: env("BACKEND_URL", "http://127.0.0.1:8081"), Token: os.Getenv("INTERNAL_TOKEN"), CertFile: os.Getenv("TLS_CERT_FILE"), KeyFile: os.Getenv("TLS_KEY_FILE")})
+	return New(Config{Listen: env("GATEWAY_LISTEN", "127.0.0.1:7000"), HealthListen: env("GATEWAY_HEALTH_LISTEN", "127.0.0.1:8080"), BackendURL: env("BACKEND_URL", "http://127.0.0.1:8081"), Token: os.Getenv("INTERNAL_TOKEN"), CertFile: os.Getenv("TLS_CERT_FILE"), KeyFile: os.Getenv("TLS_KEY_FILE"), Profile: env("GATEWAY_PROFILE", "full"), LoginScene: os.Getenv("GATEWAY_LOGIN_SCENE"), TraceMovement: os.Getenv("TRACE_MOVEMENT") == "true"})
 }
 func New(c Config) (*Server, error) {
+	if c.Profile == "" {
+		c.Profile = "full"
+	}
+	if c.Profile != "full" && c.Profile != "movement" {
+		return nil, errors.New("GATEWAY_PROFILE 必须为 full 或 movement")
+	}
+	if len(c.LoginScene) > 64 {
+		return nil, errors.New("GATEWAY_LOGIN_SCENE 过长")
+	}
 	if len(c.Token) < 32 {
 		return nil, errors.New("INTERNAL_TOKEN 至少需要 32 字符")
 	}
@@ -129,7 +144,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "service": "gateway", "connections": s.active.Load()})
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "service": "gateway", "connections": s.active.Load(), "profile": s.cfg.Profile})
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		c, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -324,15 +339,20 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 	done := make(chan struct{})
 	defer close(done)
 	requests := make(chan Request, 32)
+	moves := make(chan Request, 4)
+	var published atomic.Pointer[connectionRoute]
+	var moveBarrier sync.Mutex
+	var moveWG sync.WaitGroup
 	readErrors := make(chan error, 1)
 	go func() {
 		scanner := bufio.NewScanner(c)
-		scanner.Buffer(make([]byte, 4096), 64*1024)
+		scanner.Buffer(make([]byte, 4096), MaxMessageBytes+2)
 		window := time.Now()
 		count := 0
 		for {
 			c.SetReadDeadline(time.Now().Add(60 * time.Second))
 			if !scanner.Scan() {
+				cancel()
 				readErrors <- scanner.Err()
 				return
 			}
@@ -345,16 +365,66 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				readErrors <- errors.New("message rate limit exceeded")
 				return
 			}
+			if len(scanner.Bytes()) > MaxMessageBytes {
+				readErrors <- errors.New("message exceeds 65535 bytes")
+				cancel()
+				return
+			}
 			var r Request
 			dec := json.NewDecoder(bytes.NewReader(scanner.Bytes()))
 			dec.DisallowUnknownFields()
 			if err := dec.Decode(&r); err != nil {
+				var header struct {
+					ID string `json:"id"`
+					Op string `json:"op"`
+				}
+				if json.Unmarshal(scanner.Bytes(), &header) == nil && header.ID != "" && len(header.ID) <= 64 && header.Op == "move" {
+					select {
+					case requests <- Request{ID: header.ID, Op: header.Op, validationError: "invalid movement fields"}:
+					case <-ctx.Done():
+						return
+					}
+					continue
+				}
 				readErrors <- errors.New("invalid JSON request")
 				return
 			}
-			if dec.Decode(new(any)) != io.EOF || len(r.ID) > 64 || len(r.Op) > 24 {
+			if dec.Decode(new(any)) != io.EOF || len(r.ID) == 0 || len(r.Op) == 0 || len(r.ID) > 64 || len(r.Op) > 24 {
 				readErrors <- errors.New("invalid request")
 				return
+			}
+			r.receivedAt = time.Now()
+			if r.Op == "move" {
+				var fields map[string]json.RawMessage
+				if json.Unmarshal(scanner.Bytes(), &fields) != nil {
+					readErrors <- errors.New("invalid move")
+					cancel()
+					return
+				}
+				valid := true
+				for _, key := range []string{"seq", "dx", "dy"} {
+					value := bytes.TrimSpace(fields[key])
+					if (len(value) == 0 && s.cfg.Profile == "movement") || bytes.Equal(value, []byte("null")) {
+						valid = false
+					}
+				}
+				if !valid {
+					r.validationError = "seq, dx and dy must be numbers"
+					select {
+					case requests <- r:
+					case <-ctx.Done():
+						return
+					}
+					continue
+				}
+				select {
+				case moves <- r:
+				case <-ctx.Done():
+					return
+				case <-done:
+					return
+				}
+				continue
 			}
 			select {
 			case requests <- r:
@@ -366,17 +436,49 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 			}
 		}
 	}()
+	var writeMu sync.Mutex
 	write := func(r Response) bool {
-		c.SetWriteDeadline(time.Now().Add(3 * time.Second))
-		encoder := json.NewEncoder(c)
-		// TCP JSON 不嵌入 HTML，避免角色名中的 <>& 在转发时无谓放大消息。
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		var data bytes.Buffer
+		encoder := json.NewEncoder(&data)
 		encoder.SetEscapeHTML(false)
-		return encoder.Encode(r) == nil
+		if encoder.Encode(r) != nil {
+			return false
+		}
+		if data.Len()-1 > MaxMessageBytes {
+			return false
+		}
+		c.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		_, err := io.Copy(c, &data)
+		return err == nil
+	}
+	moveWG.Add(1)
+	go func() {
+		defer moveWG.Done()
+		s.moveWorker(ctx, moves, &published, &moveBarrier, write)
+		cancel()
+		c.Close()
+	}()
+	publish := func(route *Route) {
+		published.Store(&connectionRoute{Route: *route, ValidUntil: time.Now().Add(4 * time.Second)})
 	}
 	var route *Route
 	var lastView *View
 	defer func() {
+		cancel()
+		c.Close()
+		moveWG.Wait()
+		published.Store(nil)
 		if route != nil {
+			// 先按精确会话停止并隐藏角色，再保存该回执中的最终权威位置。
+			var final struct {
+				Role Role `json:"role"`
+			}
+			if s.sceneCall(context.Background(), *route, "/v1/disconnect", ref(route.Role), &final) == nil && sameRole(final.Role, route.Role) {
+				final.Role.Coins = route.Role.Coins
+				lastView = &View{Self: final.Role, Scene: final.Role.Scene}
+			}
 			s.checkpoint(context.Background(), *route, lastView)
 		}
 	}()
@@ -396,10 +498,26 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 			return
 		case req := <-requests:
 			resp := Response{ID: req.ID, Op: req.Op, OK: true}
+			if req.validationError != "" {
+				if !write(Response{ID: req.ID, Op: req.Op, Error: req.validationError}) {
+					return
+				}
+				continue
+			}
+			if s.cfg.Profile == "movement" && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" {
+				if !write(Response{ID: req.ID, Op: req.Op, Error: "operation is not available in movement profile"}) {
+					return
+				}
+				continue
+			}
 			var err error
 			switch req.Op {
 			case "ping":
-				resp.Data = map[string]any{"unix_ms": time.Now().UnixMilli()}
+				data := map[string]any{"unix_ms": time.Now().UnixMilli()}
+				if s.cfg.Profile == "movement" {
+					data["protocol_version"] = "webgl-movement-v1"
+				}
+				resp.Data = data
 			case "register":
 				var out map[string]any
 				err = s.call(ctx, s.cfg.BackendURL, "/v1/register", map[string]any{"name": req.Name}, &out)
@@ -411,11 +529,18 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				}
 				var out Route
 				err = s.call(ctx, s.cfg.BackendURL, "/v1/login", map[string]any{"token": req.Token}, &out)
+				if err == nil && s.cfg.LoginScene != "" && out.Role.Scene != s.cfg.LoginScene {
+					payload := ref(out.Role)
+					payload["target_scene_id"] = s.cfg.LoginScene
+					payload["request_id"] = fmt.Sprintf("entry-%s-%d", out.Role.ID, out.Role.Session)
+					err = s.call(ctx, s.cfg.BackendURL, "/v1/transfer", payload, &out)
+				}
 				if err == nil {
 					route = &out
 					lastView = nil
 					nextSession = time.Now().Add(time.Second)
-					resp.Data = out.Role
+					publish(route)
+					resp.Data = s.clientRole(out.Role)
 				}
 			default:
 				if route == nil {
@@ -423,14 +548,6 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					break
 				}
 				switch req.Op {
-				case "move":
-					p := ref(route.Role)
-					p["seq"] = req.Seq
-					p["dx"] = req.DX
-					p["dy"] = req.DY
-					var out any
-					err = s.sceneCall(ctx, *route, "/v1/move", p, &out)
-					resp.Data = out
 				case "cast", "revive":
 					if req.Seq <= 0 {
 						err = errors.New("positive action seq is required")
@@ -461,7 +578,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					if err == nil {
 						overlayBalance(&v, route.Role)
 						lastView = &v
-						resp.Data = v
+						resp.Data = s.clientView(v)
 					}
 				case "transfer":
 					if req.RequestID == "" || len(req.RequestID) > 128 {
@@ -472,12 +589,15 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					p["target_scene_id"] = req.Target
 					p["request_id"] = req.RequestID
 					var out Route
+					moveBarrier.Lock()
 					err = s.call(ctx, s.cfg.BackendURL, "/v1/transfer", p, &out)
 					if err == nil {
 						route = &out
 						lastView = nil
-						resp.Data = out.Role
+						publish(route)
+						resp.Data = s.clientRole(out.Role)
 					}
+					moveBarrier.Unlock()
 				case "claim":
 					var out struct {
 						Coins   int64 `json:"coins"`
@@ -525,6 +645,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					lastView = nil
 				}
 				route = &current
+				publish(route)
 			}
 			if !now.Before(nextView) {
 				var v View
@@ -538,7 +659,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					nextView = now.Add(200 * time.Millisecond)
 					overlayBalance(&v, route.Role)
 					lastView = &v
-					if !write(Response{Op: "state", OK: true, Data: v}) {
+					if !write(Response{Op: "state", OK: true, Data: s.clientView(v)}) {
 						return
 					}
 				}
