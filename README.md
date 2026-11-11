@@ -1,5 +1,7 @@
 # Go + C++ MMO 分布式服务器 MVP
 
+Unity WebGL 的联网移动与 AOI 接入见 [UNITY_WEBGL_MOVEMENT.md](docs/UNITY_WEBGL_MOVEMENT.md)：独立 WebSocket 转接到现有 TCP Gateway，服务端继续决定移动和 AOI。
+
 一个可分别部署的服务端原型：Go 网关承接玩家长连接，Go Backend 管理账号、场景归属和持久化，两个独立 C++ SceneHost 推进实时移动和 AOI。Linux Docker 是部署目标；同机 Compose 用于演示，多机模板位于 `deploy/`。
 
 公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。

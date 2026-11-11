@@ -1,0 +1,21 @@
+[Unit]
+Description=MMO WebSocket to TCP gateway bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/mmo-websocket
+ExecStart=/opt/mmo-websocket/websocket-bridge -listen 127.0.0.1:7001 -upstream 10.2.0.11:7000 -origins https://gate.draven.world
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

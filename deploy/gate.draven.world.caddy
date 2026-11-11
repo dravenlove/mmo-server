@@ -1,0 +1,12 @@
+gate.draven.world {
+    handle /ws {
+        reverse_proxy 127.0.0.1:7001
+    }
+    handle /healthz {
+        reverse_proxy 127.0.0.1:7001
+    }
+    handle {
+        root * /srv/axiomancy
+        file_server
+    }
+}

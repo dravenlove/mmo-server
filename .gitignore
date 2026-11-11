@@ -36,3 +36,6 @@ __debug_bin*
 !/.vscode/extensions.json
 !/.vscode/launch.json
 !/.vscode/tasks.json
+# Local WebSocket bridge binaries and logs
+/.local/
+/artifacts/

@@ -1,0 +1,28 @@
+name: mmo-websocket
+services:
+  websocket:
+    build:
+      context: ..
+      dockerfile: Dockerfile.golang
+      args:
+        SERVICE: websocket-bridge
+    image: mmo/websocket-bridge:dev
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      WS_LISTEN: 0.0.0.0:7001
+      WS_UPSTREAM: ${WS_UPSTREAM:?Set existing TCP gateway host:port}
+      WS_UPSTREAM_TLS: ${WS_UPSTREAM_TLS:-false}
+      WS_ALLOWED_ORIGINS: ${WS_ALLOWED_ORIGINS:?Set the exact game page origins}
+    ports:
+      - "127.0.0.1:7001:7001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", "http://127.0.0.1:7001/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
