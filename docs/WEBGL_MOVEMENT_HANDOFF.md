@@ -2,6 +2,8 @@
 
 协议：`webgl-movement-v1` · 2026-11-11（Asia/Shanghai）。对应客户端需求：AXIOMANCY `1bcd265`。本次只实现服务端，不修改或构建 Unity 客户端。
 
+**状态：服务端实现与部署已完成；普通公网联调待腾讯云备案放行。** 实际程序源码 `801b88f`，镜像 `webgl-20261111-v1`。2026-11-11 从 Windows 公网测试时，HTTP GET 被重定向到腾讯云备案拦截页，TLS 被重置；用户确认域名尚未备案。另一台云主机通过公网地址完成 WSS 双角色业务验收，不代表普通公网已经放行。腾讯云对未备案/未接入域名的阻断说明见 [官方文档](https://cloud.tencent.com/document/api/243/18907)。
+
 ## 客户端接入信息
 
 | 项目 | 最终约定 |
@@ -55,7 +57,7 @@ sudo docker compose --env-file deploy/game-host.env -f deploy/game-host.compose.
 sudo systemctl status mmo-websocket --no-pager
 ```
 
-`WEBGL_TICK_HZ`、`WEBGL_AOI_RADIUS`、`WEBGL_MOVE_SPEED` 控制专用场景参数；改变这些参数应更新交接约定。`WEBGL_TRACE_MOVEMENT=true` 开启诊断：网关记录请求 ID、seq、排队/调用/发送耗时；场景记录方向接收与快照生成的 Tick 和进程内排队耗时。内部批次保留每条输入 ID/seq，日志不包含 token 或请求全文。使用同一 ID/seq 对照各阶段，不直接相减未校准的跨进程/客户端绝对时钟。Docker 日志已设置轮转。
+`WEBGL_TICK_HZ`、`WEBGL_AOI_RADIUS`、`WEBGL_MOVE_SPEED` 控制专用场景参数；改变这些参数应更新交接约定。`WEBGL_TRACE_MOVEMENT=true` 开启诊断：网关记录请求 ID、seq、排队/调用/发送耗时；场景记录方向接收、模拟应用、快照生成的 Tick 和进程内排队耗时。内部批次保留每条输入 ID/seq，日志不包含 token 或请求全文。使用同一 ID/seq 对照各阶段，不直接相减未校准的跨进程/客户端绝对时钟。Docker 日志已设置轮转。
 
 ## 验收与客户端交接边界
 
@@ -70,3 +72,13 @@ python3 scripts/smoke_docker.py --tag webgl-20261111-v1 --database mysql --exter
 其中 WebSocket 双角色检查使用独立临时项目和数据库，覆盖 WSS 文本桥接核心、注册登录、4 条在途输入、停止、无输入超时、AOI 离开/返回、新会话和断线消失。线上 WSS 使用独立受控验收角色，不读取用户凭据。
 
 服务端协议检查、HTTPS/WSS 入口检查、Unity 编译和真实 WebGL 操作是不同验证范围。最终现场结果记录在 [VALIDATION.md](VALIDATION.md)；客户端方收到接入完成通知后，按本文件适配并完成双角色、松键/失焦和浏览器真实操作验收。
+
+## 备案放行后的交接复核
+
+请先在 [腾讯云备案控制台](https://console.cloud.tencent.com/beian)按实际主体情况完成首次/新增备案及接入，等待平台解除拦截。随后保持原 WSS 地址，按下面顺序复核：
+
+1. 从实际客户端网络 GET `https://gate.draven.world/healthz`，确认返回 JSON 和 `webgl-movement-v1`，而非跳转页。当前 HEAD 曾到达 Caddy，而 GET 被平台拦截，不能只用 `curl -I` 下结论。
+2. 用实际网页 Origin 建立 WSS，发送 ping、注册两个不同名字并登录，确认场景为 `scene-webgl`。
+3. 客户端按本文同步后，验证键盘方向、斜向速度、松键/失焦停止、AOI 进出、关闭网页和同凭据重连。Unity 编译与浏览器真实操作由客户端方另行验收。
+
+当前服务已部署并保持运行；无需为备案放行重新清库、生成密钥或注册原有账号。现场测试与待办边界见 [VALIDATION.md](VALIDATION.md)。

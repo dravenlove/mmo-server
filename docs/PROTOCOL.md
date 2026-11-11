@@ -1,5 +1,8 @@
 # MVP 协议约定
 
+> Unity WebGL 的 WSS、移动专用场景、在线 AOI 和公网待备案状态见 [WEBGL_MOVEMENT_HANDOFF.md](WEBGL_MOVEMENT_HANDOFF.md)。本文继续说明完整 TCP 游戏协议。
+
+
 本文件约束当前实现。内部 HTTP/JSON，POST 必须带 `X-Internal-Token`，值来自所有服务一致的 `INTERNAL_TOKEN`（至少 32 字符）。仅 GET `/healthz` 不鉴权。错误为非 2xx 加 `{"error":"说明"}`。请求 JSON 上限 64 KiB。数值必须有限。
 
 ## 公共结构

@@ -3,6 +3,23 @@
 日期：2026-11-04 基线；2026-11-05 增加 MySQL 和桌面客户端；2026-11-06 增加 PvE 战斗和数值热更验证；2026-11-11 增加真实跨地域链路排查与隧道验收。以下结果不等于容量或生产可用性承诺。
 
 
+
+## 2026-11-11：WebGL 移动、AOI 与公网入口限制
+
+服务端源码 `801b88f`，游戏镜像 `webgl-20261111-v1`。[GitHub Linux 发行验收](https://github.com/dravenlove/mmo-server/actions/runs/43029183920)成功，包括 Go/race/vet、6 项 CTest、配置管理工具、SQLite/MySQL 既有战斗与热更恢复回归，以及独立鉴权加 WebSocket 双角色集成；四镜像匿名拉取验证通过。本机原生进程的独立移动世界与 WebSocket 双角色检查也通过。
+
+实际游戏主机运行 6 个新镜像容器：原 Backend、原完整 Gateway、两个战斗场景，以及新增的 movement Gateway / `scene-webgl`；鉴权主机保持原 Auth 镜像。六个游戏容器均健康、无自发重启。新 Gateway 只开放回环 7002，Native WebSocket bridge 仍为回环 7001，Caddy 原域名配置和静态目录保留。转接程序校验和与 build.json 一致。
+
+维护前停止入口、保存两个已加载角色的最终快照，其余三个角色保留已有存档；保存五表静止 MySQL 备份。新核心服务启动后、重新开放入口前，原 5 个角色及 4 个战斗快照逐项对比一致。公网地址验收新增两个独立角色；验收后再次核对原 5 个角色、原战斗快照、余额与凭据哈希仍一致，未完成迁移为 0。没有读取既有客户端凭据。
+
+从广州云主机通过公网地址连接 `wss://gate.draven.world/ws`，证书验证与精确 Origin 检查成功，10 项现场检查通过：错误/缺失 Origin 与查询拒绝、注册登录到独立场景、双角色 AOI、4 条移动在途、零方向停止、250ms 输入失联、AOI 离开/返回、新会话屏蔽旧连接、旧连接关闭不影响新会话、正常断线隐藏及未登录输入拒绝。52 次移动回执中位约 49.78ms、最大约 53.04ms；94 次视图请求中位约 50.56ms、最大约 101.73ms。仅代表这个云主机路径和当前短时负载。
+
+**Windows 普通公网未通过，已经定位到平台备案拦截。** DNS 解析正确，TLS 握手被重置；HTTP GET 返回 302，目标为腾讯云 `dnspod.qcloud.com/static/webblock.html?d=gate.draven.world`，页面指向备案控制台。用户确认域名尚未备案；腾讯云说明未备案/未接入域名会被阻断，HTTPS 也会受影响。[官方说明](https://cloud.tencent.com/document/api/243/18907)。云主机来源的成功不能作为普通公网可用证明。未变更端口或关闭证书验证来绕开拦截。
+
+原完整 TCP 入口在 Windows 公网协议 ping 10/10，中位约 38.02ms，最大约 38.31ms。客户端源码、Unity 引擎构建和 WebGL 画面没有修改或验证；不宣称浏览器接入或按键到首帧已通过，也不将这些短时数据作为容量承诺。
+
+实际配置、原转接程序、Compose 和 MySQL 保存在游戏主机 `backups/webgl-20261111-v1/`；独立验收凭据保存在鉴权主机对应私有测试目录。角色数据不能通过覆盖旧 SQL 盲目回退；回退旧两场景路由前，须用当前 Backend 正常迁移仍归属 `scene-webgl` 的角色。交付协议与备案放行后的复测步骤见 [WEBGL_MOVEMENT_HANDOFF.md](WEBGL_MOVEMENT_HANDOFF.md)。
+
 ## 2026-11-11：游戏同机与独立鉴权部署
 
 当前拓扑已经切换为 game（Gateway + Game Backend + 两个 C++ Scene）和 auth（账号注册与凭据验证）。游戏请求通过同机 Docker 网络调用场景，鉴权 HTTP 与 Auth 数据库连接使用受限 SSH 加密链路。客户端源码与程序未修改。
