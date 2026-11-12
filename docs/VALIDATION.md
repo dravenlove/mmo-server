@@ -5,6 +5,26 @@
 
 
 
+## 2026-11-12：核心战斗 v1 发布与公网验收
+
+源码 `82ec8743e470063a3986eee66879ceec4f296fff`，镜像 `combat-20261112-v1`。[Linux 发行运行 43149692964](https://github.com/dravenlove/mmo-server/actions/runs/43149692964)全部成功，覆盖 Go/race/vet、7 项 CTest、SQLite 与 MySQL 容器持久化/重启恢复、独立 Auth、原移动 WebSocket 与新战斗 WebSocket 双角色集成，以及四镜像匿名拉取。
+
+真实游戏主机已从 6 个服务升级为 8 个，新增独立 `scene-combat` / `gateway-combat`，八容器健康且重启次数为 0，镜像源码标签均为上述完整 SHA。Native bridge 同步该 SHA，二进制 SHA-256 为 `003932275ca69c8c9a13e8ab8a7f28a4dbea3213d2ac6b97755483b7043f52a5`。原 `/ws` 保持 `webgl-movement-v1`；新增 `/combat/ws` 和 `/combat/healthz` 对应 `webgl-combat-v1`，两个桥接进程及 Caddy 均健康。原 Auth 镜像与链路保持运行。
+
+维护前停止入口及 Gateway、保存已加载角色的最终权威状态并制作五表一致 MySQL 备份。首次导出未成功，加入 `--set-gtid-purged=OFF` 后完成备份；未扩大数据库账号权限。重新开放入口前，原 8 个角色和 7 份战斗快照逐项一致。公网验收后再次核对原有角色均存在、名字/凭据哈希/余额一致，账号数没有增加；两个既有受控测试角色在回到移动场景后仍保留六键冷却。私有回退材料在 `backups/combat-20261112-v1/`。
+
+Windows 客户机使用实际 Unity iframe Origin 与系统默认 TLS 校验，公网验收通过：
+
+- 战斗 WSS 握手、协议 ping、既有角色登录、未授权 Origin 403。
+- 弹道向其他玩家延迟命中且仅扣 28 HP；相同成功动作重试不重复生成；冷却拒绝不关闭连接。
+- 墙体的权威状态、挡弹不扣目标 HP、阻挡角色移动。
+- 新会话清理旧对象、战斗序号重置、技能冷却保留；同一弹道对怪物扣 28 HP。
+- 原移动入口的 10 项公网协议回归全部通过，包括 AOI、4 条输入在途、停止、输入失效及新旧会话隔离。
+
+本次战斗 6 次施法回执中位 55ms、最大 109ms，15 次移动回执中位 47ms、最大 62ms；原移动入口 54 次移动中位约 49.68ms、最大约 100.91ms。只代表本机到当前服务的短时协议结果，不是浏览器输入到首帧或容量指标。报告为 `output/combat-v1-public-report.json`、`output/unity-iframe-business-report.json` 与服务器私有 `final-audit.json`。测试使用两个既有受控账号，没有读取玩家客户端凭据。
+
+没有修改 Unity 客户端、触发 Unity 云构建或宣称实际 WebGL 战斗 UI 已验收；客户端需按 [WEBGL_COMBAT_HANDOFF.md](WEBGL_COMBAT_HANDOFF.md)适配新入口、技能对象与业务拒绝语义。
+
 ## 2026-11-12：核心战斗 v1 本机回归
 
 新增独立 `abilities` 场景与 Gateway Profile，使用 `webgl-combat-v1`、`projectile-wall-v1`。弹道连续碰撞覆盖玩家与怪物，墙体为有向矩形，阻挡移动和弹道；原无战斗移动场景及原四技能场景维持原模式。Backend 接受旧四键和新六键冷却快照，场景跨模式保留新冷却，避免切换入口刷新消耗。

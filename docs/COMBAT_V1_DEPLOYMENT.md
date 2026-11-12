@@ -6,6 +6,9 @@
 
 1. 更新源码，保留已有 `deploy/game-host.env`。先在独立环境执行 `go test ./...`、`go vet ./...`、7 项 CTest、`python scripts/smoke_abilities.py`；容器回归使用 `smoke_docker.py --webgl`，含原移动与新战斗协议测试。
 2. 维护前备份原 Compose、环境、Native bridge、Caddy 配置和 MySQL。先停止入口与所有 Gateway，让断线位置/战斗快照完成保存，再取得一致的数据库备份。
+
+   本次 MySQL 8 导出使用 `--single-transaction --no-tablespaces --skip-triggers --set-gtid-purged=OFF`，连接信息通过权限 600 的临时配置文件提供，备份权限同为 600。没有为了导出扩大数据库账号权限。不要把真实密码写在命令行或提交到仓库。
+
 3. 新 Backend 可读四键旧冷却与六键新冷却。场景也保留新增冷却，避免角色跨回移动场景或旧战斗场景时刷新技能。需要协调更新整套游戏服务；不能把已产生六键快照的数据库直接交回旧版 Backend/Scene。回退应使用经过兼容验证的程序，或维护窗口内恢复升级前的一致备份。
 4. 原 env 只调整镜像标签为 `combat-20261112-v1`，按需添加 `COMBAT_PVP_ENABLED=true`；不要用 example 覆盖真实配置。
 
