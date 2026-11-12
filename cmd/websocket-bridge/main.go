@@ -25,8 +25,9 @@ func main() {
 	upstream := flag.String("upstream", env("WS_UPSTREAM", "127.0.0.1:7000"), "fixed TCP gateway")
 	origins := flag.String("origins", env("WS_ALLOWED_ORIGINS", "http://127.0.0.1:8088,http://localhost:8088"), "comma-separated browser origins")
 	upstreamTLS := flag.Bool("upstream-tls", env("WS_UPSTREAM_TLS", "false") == "true", "verify TLS to gateway")
+	protocol := flag.String("protocol", env("WS_PROTOCOL_VERSION", "webgl-movement-v1"), "published protocol version")
 	flag.Parse()
-	bridge, err := wsbridge.New(wsbridge.Config{Upstream: *upstream, UpstreamTLS: *upstreamTLS, AllowedOrigins: strings.Split(*origins, ",")})
+	bridge, err := wsbridge.New(wsbridge.Config{Upstream: *upstream, UpstreamTLS: *upstreamTLS, AllowedOrigins: strings.Split(*origins, ","), ProtocolVersion: *protocol})
 	if err != nil {
 		log.Fatal(err)
 	}

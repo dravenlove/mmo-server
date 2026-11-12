@@ -15,6 +15,48 @@ func testCombat(hp, revision, session int64) json.RawMessage {
 	return data
 }
 
+func TestAbilityCooldownSnapshotCompatibility(t *testing.T) {
+	var state map[string]any
+	json.Unmarshal(testCombat(180, 8, 1), &state)
+	cd := state["cooldowns"].(map[string]any)
+	cd["arc_bolt"], cd["stone_wall"] = 1200, 8000
+	raw, _ := json.Marshal(state)
+	if _, err := combatRevision(raw); err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t)
+	_, route := registerLogin(t, f, "ability-checkpoint")
+	state["action_session"] = route.Role.SessionEpoch
+	raw, _ = json.Marshal(state)
+	role := route.Role
+	role.Combat = raw
+	wantPost(t, f.s, "checkpoint", roleResult{role}, 200, nil)
+	f.restart(t)
+	stored, err := f.s.role(context.Background(), role.RoleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored struct {
+		Cooldowns map[string]int64 `json:"cooldowns"`
+	}
+	json.Unmarshal(stored.Combat, &restored)
+	if restored.Cooldowns["arc_bolt"] != 1200 || restored.Cooldowns["stone_wall"] != 8000 {
+		t.Fatal("ability cooldowns did not survive restart")
+	}
+	delete(cd, "stone_wall")
+	raw, _ = json.Marshal(state)
+	if _, err := combatRevision(raw); err == nil {
+		t.Fatal("incomplete ability cooldown accepted")
+	}
+	cd["stone_wall"] = 8000
+	delete(cd, "strike")
+	cd["unknown"] = 0
+	raw, _ = json.Marshal(state)
+	if _, err := combatRevision(raw); err == nil {
+		t.Fatal("unknown/missing cooldown accepted")
+	}
+}
+
 func setCombat(f *fakeScene, id string, state json.RawMessage) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

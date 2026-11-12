@@ -113,7 +113,7 @@ public:
 
     mmo::Json health() const {
         return {{"ok", true}, {"scene_id", config_.scene_id},
-                {"tick", tick_.load()}, {"players", players_.load()}, {"mode",config_.combat_enabled?"combat":"movement"}};
+                {"tick", tick_.load()}, {"players", players_.load()}, {"mode",config_.abilities_enabled?"abilities":config_.combat_enabled?"combat":"movement"}};
     }
 
 private:
@@ -200,8 +200,12 @@ int main(int argc, char** argv) {
         config.scene_id = environment("SCENE_ID", "scene-1");
         if (config.scene_id.empty() || config.scene_id.size() > 128) throw std::runtime_error("invalid SCENE_ID");
         const auto mode=environment("SCENE_MODE", "combat");
-        if (mode!="combat" && mode!="movement") throw std::invalid_argument("SCENE_MODE must be combat or movement");
-        config.combat_enabled=mode=="combat";
+        if (mode!="combat" && mode!="movement" && mode!="abilities") throw std::invalid_argument("SCENE_MODE must be combat, movement or abilities");
+        config.combat_enabled=mode!="movement";
+        config.abilities_enabled=mode=="abilities";
+        const auto pvp=environment("PVP_ENABLED","true");
+        if (pvp!="true" && pvp!="false") throw std::invalid_argument("PVP_ENABLED must be true or false");
+        config.pvp_enabled=pvp=="true";
         config.trace_movement=environment("TRACE_MOVEMENT","false")=="true";
         config.tick_hz = integer_env("TICK_HZ", "20", 1, 120);
         config.aoi_radius = number_env("AOI_RADIUS", "30", 1, 1000);

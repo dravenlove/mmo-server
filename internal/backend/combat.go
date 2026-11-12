@@ -37,13 +37,23 @@ func combatRevision(raw json.RawMessage) (int64, error) {
 	}
 	if v.HP == nil || v.MaxHP == nil || v.MP == nil || v.MaxMP == nil || v.Dead == nil || v.Revive == nil || v.Revision == nil || v.LastAction == nil || v.ActionSession == nil ||
 		*v.MaxHP < 1 || *v.MaxHP > 1000000 || *v.HP < 0 || *v.HP > *v.MaxHP || *v.MaxMP < 1 || *v.MaxMP > 1000000 || *v.MP < 0 || *v.MP > *v.MaxMP ||
-		*v.Revive < 0 || *v.Revive > 600000 || *v.Revision < 0 || *v.LastAction < 0 || *v.ActionSession < 1 || *v.Dead != (*v.HP == 0) || len(v.Cooldowns) != 4 {
+		*v.Revive < 0 || *v.Revive > 600000 || *v.Revision < 0 || *v.LastAction < 0 || *v.ActionSession < 1 || *v.Dead != (*v.HP == 0) || (len(v.Cooldowns) != 4 && len(v.Cooldowns) != 6) {
 		return 0, bad("战斗快照数值无效")
 	}
 	for skill, remaining := range v.Cooldowns {
-		if (skill != "strike" && skill != "whirlwind" && skill != "charge" && skill != "mend") || remaining < 0 || remaining > 600000 {
+		if (skill != "strike" && skill != "whirlwind" && skill != "charge" && skill != "mend" && skill != "arc_bolt" && skill != "stone_wall") || remaining < 0 || remaining > 600000 {
 			return 0, bad("战斗冷却快照无效")
 		}
+	}
+	for _, skill := range []string{"strike", "whirlwind", "charge", "mend"} {
+		if _, ok := v.Cooldowns[skill]; !ok {
+			return 0, bad("战斗冷却快照缺少基础技能")
+		}
+	}
+	_, bolt := v.Cooldowns["arc_bolt"]
+	_, wall := v.Cooldowns["stone_wall"]
+	if bolt != wall {
+		return 0, bad("战斗冷却快照不完整")
 	}
 	return *v.Revision, nil
 }

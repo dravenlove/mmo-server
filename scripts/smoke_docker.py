@@ -125,6 +125,16 @@ if args.webgl:
     web_gate['environment'].update(GATEWAY_PROFILE='movement', GATEWAY_LOGIN_SCENE='scene-webgl')
     web_gate['ports'] = [{'target': 7000, 'published': str(ports['webgl']), 'host_ip': '127.0.0.1', 'protocol': 'tcp'}]
     config['services']['gateway-webgl'] = web_gate
+    ports['combat'] = free_port()
+    combat_scene = copy.deepcopy(web_scene)
+    combat_scene['environment'].update(SCENE_ID='scene-combat', SCENE_PORT='9004', SCENE_MODE='abilities', PVP_ENABLED='true')
+    config['services']['scene-combat'] = combat_scene
+    backend['environment']['SCENES'] += ',scene-combat=http://scene-combat:9004'
+    backend['depends_on']['scene-combat'] = {'condition': 'service_healthy'}
+    combat_gate = copy.deepcopy(web_gate)
+    combat_gate['environment'].update(GATEWAY_PROFILE='abilities', GATEWAY_LOGIN_SCENE='scene-combat')
+    combat_gate['ports'] = [{'target': 7000, 'published': str(ports['combat']), 'host_ip': '127.0.0.1', 'protocol': 'tcp'}]
+    config['services']['gateway-combat'] = combat_gate
 cfg = work / 'compose.json'
 cfg.write_text(json.dumps(config, indent=2), encoding='utf-8')
 compose = ['docker', 'compose', '-f', str(cfg), '-p', project]
@@ -191,6 +201,11 @@ try:
         (work / 'webgl.log').write_text(web_check.stdout + web_check.stderr, encoding='utf-8')
         if web_check.returncode: raise AssertionError(web_check.stdout + web_check.stderr)
         passed('WebSocket two-player movement, bounded inputs, AOI, reconnect and disconnect in isolated movement world')
+        child_env['MMO_TEST_COMBAT_GATEWAY'] = '127.0.0.1:' + str(ports['combat'])
+        combat_check = run(['go', 'test', './internal/wsbridge', '-run', '^TestAbilityWorldIntegration$', '-count=1', '-v', '-timeout', '90s'], timeout=100)
+        (work / 'ability.log').write_text(combat_check.stdout + combat_check.stderr, encoding='utf-8')
+        if combat_check.returncode: raise AssertionError(combat_check.stdout + combat_check.stderr)
+        passed('WebSocket projectile PvP, wall collision, cooldown, retries and reconnect in isolated combat world')
     if args.external_auth:
         compose_ok('stop', 'auth')
         new_peer().request('login', ok=False, token=auth['token'])

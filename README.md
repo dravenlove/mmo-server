@@ -4,6 +4,8 @@
 
 Unity WebGL 的移动与 AOI 接入见 [服务端交接协议](docs/WEBGL_MOVEMENT_HANDOFF.md)，提供独立无战斗场景和 WSS 入口；当前使用 [IP 地址联调](docs/IP_WSS_DEBUG.md)，保留 TLS 证书校验。原桌面战斗入口继续保留。
 
+新增 [WebGL 核心战斗 v1 联调协议](docs/WEBGL_COMBAT_HANDOFF.md)：独立 `/combat/ws` 入口、服务端弹道、PvP/PvE 伤害和临时墙体，包含客户端消息示例与双角色验收步骤。[部署说明](docs/COMBAT_V1_DEPLOYMENT.md)。
+
 公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。
 
 **战斗版本的玩法与两台 VPS 更新步骤见 [COMBAT.md](docs/COMBAT.md)，数值热更和在线回滚见 [配置热更 demo](docs/CONFIG_HOT_RELOAD.md)。Windows 测试已部署的服务器，优先使用 [桌面客户端](docs/DESKTOP_CLIENT.md)。** 构建后双击 `dist/desktop/MMO.Client.exe`，填写 gateway 地址，即可测试连接、登录、移动、战斗和切换场景；本机直接连接远程服务器。

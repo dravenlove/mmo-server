@@ -26,11 +26,12 @@ import (
 const MaxFrame = 64 * 1024
 
 type Config struct {
-	Upstream       string
-	UpstreamTLS    bool
-	AllowedOrigins []string
-	MaxConnections int
-	Logger         *log.Logger
+	Upstream        string
+	UpstreamTLS     bool
+	AllowedOrigins  []string
+	MaxConnections  int
+	Logger          *log.Logger
+	ProtocolVersion string
 }
 
 type Server struct {
@@ -53,6 +54,12 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = log.Default()
 	}
+	if cfg.ProtocolVersion == "" {
+		cfg.ProtocolVersion = "webgl-movement-v1"
+	}
+	if cfg.ProtocolVersion != "webgl-movement-v1" && cfg.ProtocolVersion != "webgl-combat-v1" {
+		return nil, errors.New("unsupported WebSocket protocol version")
+	}
 	s := &Server{cfg: cfg, clients: make(map[*websocket.Conn]net.Conn), origins: make(map[string]bool)}
 	for _, origin := range cfg.AllowedOrigins {
 		u, err := url.Parse(strings.TrimSpace(origin))
@@ -70,7 +77,7 @@ func New(cfg Config) (*Server, error) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"ok":true,"service":"websocket-bridge","protocol_version":"webgl-movement-v1"}`+"\n")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "service": "websocket-bridge", "protocol_version": s.cfg.ProtocolVersion})
 		return
 	}
 	if r.URL.Path != "/ws" || r.Method != http.MethodGet {

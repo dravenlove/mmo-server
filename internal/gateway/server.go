@@ -36,31 +36,41 @@ type Route struct {
 	URL  string `json:"scene_url"`
 }
 type View struct {
-	Self               Role            `json:"self"`
-	Players            []Role          `json:"players"`
-	Tick               uint64          `json:"tick"`
-	Scene              string          `json:"scene_id"`
-	Mobs               json.RawMessage `json:"mobs,omitempty"`
-	Skills             json.RawMessage `json:"skills,omitempty"`
-	Events             json.RawMessage `json:"events,omitempty"`
-	PlayersTruncated   bool            `json:"players_truncated,omitempty"`
-	VisiblePlayerCount int             `json:"visible_player_count,omitempty"`
-	ConfigVersion      string          `json:"config_version,omitempty"`
-	ConfigGeneration   uint64          `json:"config_generation,omitempty"`
-	ConfigAppliedTick  uint64          `json:"config_applied_tick,omitempty"`
+	Self                 Role            `json:"self"`
+	Players              []Role          `json:"players"`
+	Tick                 uint64          `json:"tick"`
+	Scene                string          `json:"scene_id"`
+	Mobs                 json.RawMessage `json:"mobs,omitempty"`
+	Skills               json.RawMessage `json:"skills,omitempty"`
+	Events               json.RawMessage `json:"events,omitempty"`
+	Projectiles          json.RawMessage `json:"projectiles,omitempty"`
+	Walls                json.RawMessage `json:"walls,omitempty"`
+	WorldEpoch           string          `json:"world_epoch,omitempty"`
+	AbilityRules         string          `json:"ability_rules_version,omitempty"`
+	PVPEnabled           *bool           `json:"pvp_enabled,omitempty"`
+	EventCursor          uint64          `json:"event_cursor,omitempty"`
+	ProjectilesTruncated bool            `json:"projectiles_truncated,omitempty"`
+	EventsTruncated      bool            `json:"events_truncated,omitempty"`
+	PlayersTruncated     bool            `json:"players_truncated,omitempty"`
+	VisiblePlayerCount   int             `json:"visible_player_count,omitempty"`
+	ConfigVersion        string          `json:"config_version,omitempty"`
+	ConfigGeneration     uint64          `json:"config_generation,omitempty"`
+	ConfigAppliedTick    uint64          `json:"config_applied_tick,omitempty"`
 }
 type Request struct {
-	ID              string  `json:"id"`
-	Op              string  `json:"op"`
-	Name            string  `json:"name,omitempty"`
-	Token           string  `json:"token,omitempty"`
-	Seq             int64   `json:"seq,omitempty"`
-	DX              float64 `json:"dx,omitempty"`
-	DY              float64 `json:"dy,omitempty"`
-	Target          string  `json:"target_scene_id,omitempty"`
-	RequestID       string  `json:"request_id,omitempty"`
-	SkillID         string  `json:"skill_id,omitempty"`
-	TargetID        string  `json:"target_id,omitempty"`
+	ID              string   `json:"id"`
+	Op              string   `json:"op"`
+	Name            string   `json:"name,omitempty"`
+	Token           string   `json:"token,omitempty"`
+	Seq             int64    `json:"seq,omitempty"`
+	DX              float64  `json:"dx,omitempty"`
+	DY              float64  `json:"dy,omitempty"`
+	Target          string   `json:"target_scene_id,omitempty"`
+	RequestID       string   `json:"request_id,omitempty"`
+	SkillID         string   `json:"skill_id,omitempty"`
+	TargetID        string   `json:"target_id,omitempty"`
+	X               *float64 `json:"x,omitempty"`
+	Y               *float64 `json:"y,omitempty"`
 	receivedAt      time.Time
 	validationError string
 }
@@ -104,8 +114,8 @@ func New(c Config) (*Server, error) {
 	if c.Profile == "" {
 		c.Profile = "full"
 	}
-	if c.Profile != "full" && c.Profile != "movement" {
-		return nil, errors.New("GATEWAY_PROFILE 必须为 full 或 movement")
+	if c.Profile != "full" && c.Profile != "movement" && c.Profile != "abilities" {
+		return nil, errors.New("GATEWAY_PROFILE 必须为 full、movement 或 abilities")
 	}
 	if len(c.LoginScene) > 64 {
 		return nil, errors.New("GATEWAY_LOGIN_SCENE 过长")
@@ -380,9 +390,9 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					ID string `json:"id"`
 					Op string `json:"op"`
 				}
-				if json.Unmarshal(scanner.Bytes(), &header) == nil && header.ID != "" && len(header.ID) <= 64 && header.Op == "move" {
+				if json.Unmarshal(scanner.Bytes(), &header) == nil && header.ID != "" && len(header.ID) <= 64 && (header.Op == "move" || header.Op == "cast") {
 					select {
-					case requests <- Request{ID: header.ID, Op: header.Op, validationError: "invalid movement fields"}:
+					case requests <- Request{ID: header.ID, Op: header.Op, validationError: "invalid input fields"}:
 					case <-ctx.Done():
 						return
 					}
@@ -396,6 +406,16 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				return
 			}
 			r.receivedAt = time.Now()
+			if r.Op == "cast" && (r.SkillID == "arc_bolt" || r.SkillID == "stone_wall") {
+				var fields map[string]json.RawMessage
+				json.Unmarshal(scanner.Bytes(), &fields)
+				for _, key := range []string{"seq", "dx", "dy"} {
+					value := bytes.TrimSpace(fields[key])
+					if len(value) == 0 || bytes.Equal(value, []byte("null")) {
+						r.validationError = "seq, dx and dy must be numbers"
+					}
+				}
+			}
 			if r.Op == "move" {
 				var fields map[string]json.RawMessage
 				if json.Unmarshal(scanner.Bytes(), &fields) != nil {
@@ -406,7 +426,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				valid := true
 				for _, key := range []string{"seq", "dx", "dy"} {
 					value := bytes.TrimSpace(fields[key])
-					if (len(value) == 0 && s.cfg.Profile == "movement") || bytes.Equal(value, []byte("null")) {
+					if (len(value) == 0 && s.cfg.Profile != "full") || bytes.Equal(value, []byte("null")) {
 						valid = false
 					}
 				}
@@ -512,12 +532,21 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				}
 				continue
 			}
+			if s.cfg.Profile == "abilities" && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "revive" {
+				if !write(Response{ID: req.ID, Op: req.Op, Error: "operation is not available in abilities profile"}) {
+					return
+				}
+				continue
+			}
 			var err error
 			switch req.Op {
 			case "ping":
 				data := map[string]any{"unix_ms": time.Now().UnixMilli()}
 				if s.cfg.Profile == "movement" {
 					data["protocol_version"] = "webgl-movement-v1"
+				}
+				if s.cfg.Profile == "abilities" {
+					data["protocol_version"] = "webgl-combat-v1"
 				}
 				resp.Data = data
 			case "register":
@@ -563,6 +592,15 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 							break
 						}
 						p["skill_id"], p["target_id"] = req.SkillID, req.TargetID
+						if req.SkillID == "arc_bolt" || req.SkillID == "stone_wall" {
+							p["dx"], p["dy"] = req.DX, req.DY
+							if req.X != nil {
+								p["x"] = *req.X
+							}
+							if req.Y != nil {
+								p["y"] = *req.Y
+							}
+						}
 					}
 					var out map[string]json.RawMessage
 					err = s.sceneCall(ctx, *route, "/v1/"+req.Op, p, &out)
@@ -570,7 +608,9 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 						if snapshot, valid := actionSnapshot(out, *route, lastView); valid {
 							lastView = snapshot
 							// 持久化失败只记录日志，不能把已成功的结算伪装成未执行。
-							s.checkpoint(serviceCtx, *route, lastView)
+							if string(out["accepted"]) != "false" {
+								s.checkpoint(serviceCtx, *route, lastView)
+							}
 						}
 					}
 					resp.Data = out

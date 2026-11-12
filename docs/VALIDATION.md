@@ -5,6 +5,16 @@
 
 
 
+## 2026-11-12：核心战斗 v1 本机回归
+
+新增独立 `abilities` 场景与 Gateway Profile，使用 `webgl-combat-v1`、`projectile-wall-v1`。弹道连续碰撞覆盖玩家与怪物，墙体为有向矩形，阻挡移动和弹道；原无战斗移动场景及原四技能场景维持原模式。Backend 接受旧四键和新六键冷却快照，场景跨模式保留新冷却，避免切换入口刷新消耗。
+
+本机 Go 全包测试与 vet 通过；C++ 7 项 CTest 全部通过，新增用例覆盖延迟命中、首目标不穿透、高速扫掠、旋转墙、墙体过期、资源与冷却、幂等重试、会话隔离、断线/租约清理、PvP 死亡复活、关闭 PvP、对象容量和极端快照字节预算。SQLite Backend 回归验证新增冷却经过持久化重启保留，并拒绝不完整或未知冷却键。
+
+`python scripts/smoke_abilities.py` 在随机回环端口、独立 SQLite 和临时进程上运行真实 WebSocket：双角色登录、移动、28 点 PvP 伤害、正常冷却拒绝不关闭连接、墙体挡弹与挡人、重复请求去重、重登清理对象并保留冷却、非法瞄准字段拒绝均通过。报告在 `output/ability-smoke-20261112-113619/`；原 `python scripts/smoke.py` 15 项检查通过，报告在 `output/smoke-20261112-113629/`。
+
+本机 Docker Desktop 引擎不可用，未用该引擎完成本轮容器验收；发行工作流的 Linux 7 项 CTest、Go race、MySQL 及容器回归仍需以本次发布运行结果为准。源码检查不代表线上已升级，也不代表 Unity 已编译或实际 WebGL 操作已验证。客户端接口见 [WEBGL_COMBAT_HANDOFF.md](WEBGL_COMBAT_HANDOFF.md)。
+
 ## 2026-11-12：Unity 预览 Origin 与断线诊断
 
 用户从实际 WS 请求头确认来源为 `https://developer.unity3dusercontent.com`，与地址栏的 `https://cloud.unity.com` 不同。修改前，Windows 对该实际来源的公网 WSS 握手明确返回 403；精确增加来源后返回 101，并收到 `webgl-movement-v1` ping 回执。原 IP、原域名与 Unity Dashboard 三个来源继续通过，未授权来源仍返回 403。

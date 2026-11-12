@@ -35,6 +35,11 @@ func (s *Server) clientView(view View) View {
 			view.Players[i] = s.clientRole(view.Players[i])
 		}
 		view.Mobs, view.Skills, view.Events = nil, nil, nil
+		view.Projectiles, view.Walls = nil, nil
+		view.WorldEpoch, view.AbilityRules = "", ""
+		view.PVPEnabled = nil
+		view.ProjectilesTruncated, view.EventsTruncated = false, false
+		view.EventCursor = 0
 	}
 	return view
 }

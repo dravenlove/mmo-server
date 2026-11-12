@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <random>
 #include <utility>
 
 namespace mmo {
@@ -177,6 +178,13 @@ Role::Combat parse_combat(const Json& value, std::int64_t session) {
         if (remaining > 600000) throw Error(400, "invalid skill cooldown");
         combat.cooldowns[skill.id] = static_cast<double>(remaining) / 1000;
     }
+    const auto& cooldowns = value["cooldowns"];
+    if (cooldowns.contains("arc_bolt") != cooldowns.contains("stone_wall")) throw Error(400, "incomplete ability cooldown snapshot");
+    for (const auto* id : {"arc_bolt", "stone_wall"}) if (cooldowns.contains(id)) {
+        const auto remaining = integer_field(cooldowns, id, true);
+        if (remaining > 600000) throw Error(400, "invalid ability cooldown");
+        combat.cooldowns[id] = static_cast<double>(remaining) / 1000;
+    }
     if (combat.action_session != session) {
         combat.action_session = session;
         combat.last_action_seq = 0;
@@ -213,6 +221,9 @@ Json Scene::Npc::json() const {
 }
 
 Scene::Scene(Config config) : config_(std::move(config)) {
+    if (config_.abilities_enabled && !config_.combat_enabled) throw std::invalid_argument("abilities require combat mode");
+    std::random_device random;
+    world_epoch_ = std::to_string(random()) + "-" + std::to_string(random());
     combat_config_ = validate_config(config_.combat_config.is_null() ? default_combat_config() : config_.combat_config);
     config_history_.emplace(combat_config_["version"].get<std::string>(), combat_config_);
     const std::array<std::pair<double, double>, 4> spawns{{{-8, 4}, {10, 4}, {6, -10}, {18, 16}}};
@@ -241,6 +252,10 @@ Role Scene::parse_role(const Json& request) const {
     role.x = real_field(j, "x", 100);
     role.y = real_field(j, "y", 100);
     role.combat = parse_combat(j.value("combat", Json()), role.session_epoch);
+    if (config_.abilities_enabled && !role.combat.cooldowns.count("arc_bolt")) {
+        role.combat.cooldowns["arc_bolt"] = role.combat.cooldowns["stone_wall"] = 0;
+        changed(role.combat);
+    }
     if (role.scene_id != config_.scene_id) throw Error(409, "scene mismatch");
     return role;
 }
@@ -294,6 +309,7 @@ Json Scene::enter(const Json& request) {
         if (role.session_epoch > entity.role.session_epoch) {
             if ((!entity.connected || entity.lease_age>3) && occupied_count()>=config_.max_players) throw Error(503,"scene player capacity exhausted");
             entity.connected = true;
+            clear_abilities(role.role_id);
             entity.role.session_epoch = role.session_epoch;
             entity.role.coins = role.coins;
             entity.role.name = role.name;
@@ -399,7 +415,7 @@ Json Scene::execute(const std::string& path, const Json& request) {
         }
         ensure_tracked(id);
         removed_epochs_[id] = std::max(removed_epochs_[id], owner);
-        if (it != entities_.end()) entities_.erase(it);
+        if (it != entities_.end()) { clear_abilities(id); entities_.erase(it); }
         return {{"accepted", true}};
     }
 
@@ -407,6 +423,7 @@ Json Scene::execute(const std::string& path, const Json& request) {
         auto& entity = matching(request);
         if (entity.mode != Mode::Active) throw Error(409,"role is not active");
         entity.connected=false; entity.dx=entity.dy=0; entity.input_age=1;
+        clear_abilities(entity.role.role_id);
         return {{"role",entity.role.json()}};
     }
     if (path == "/v1/move_batch") {
@@ -428,7 +445,10 @@ Json Scene::execute(const std::string& path, const Json& request) {
     if (path == "/v1/cast") return cast(entity, request);
     if (path == "/v1/revive") return revive(entity, request);
     if (path == "/v1/move") {
-        if (config_.combat_enabled && entity.role.combat.dead) throw Error(409, "dead players cannot move; revive first");
+        if (config_.combat_enabled && entity.role.combat.dead) {
+            if (config_.abilities_enabled) return {{"accepted",false},{"reason","dead"}};
+            throw Error(409, "dead players cannot move; revive first");
+        }
         auto seq = integer_field(request, "seq");
         double dx = real_field(request, "dx", 1), dy = real_field(request, "dy", 1);
         if (seq <= entity.last_seq) throw Error(409, "input sequence must increase");
@@ -454,6 +474,7 @@ Json Scene::execute(const std::string& path, const Json& request) {
         if (entity.mode == Mode::Prepared || (entity.mode == Mode::Frozen && entity.transfer_id != transfer))
             throw Error(409, "transfer conflict");
         entity.mode = Mode::Frozen;
+        clear_abilities(entity.role.role_id);
         entity.transfer_id = transfer;
         entity.dx = entity.dy = 0;
         return {{"role", entity.role.json()}};
@@ -491,8 +512,10 @@ void Scene::step(double dt) {
         if (config_.combat_enabled) step_combat(entity, dt);
         // 输入失联后最多继续移动 250ms，避免网关断开留下无限移动角色。
         double elapsed = entity.connected ? std::min(dt, std::max(0.0, 0.25 - entity.input_age)) : 0;
-        entity.role.x = std::clamp(entity.role.x + entity.dx * config_.move_speed * elapsed, -100.0, 100.0);
-        entity.role.y = std::clamp(entity.role.y + entity.dy * config_.move_speed * elapsed, -100.0, 100.0);
+        const auto position = wall_move(entity.role.x, entity.role.y,
+            std::clamp(entity.role.x + entity.dx * config_.move_speed * elapsed, -100.0, 100.0),
+            std::clamp(entity.role.y + entity.dy * config_.move_speed * elapsed, -100.0, 100.0), 0.45);
+        entity.role.x = position.first; entity.role.y = position.second;
         entity.input_age = std::min(1.0, entity.input_age + dt);
         if (entity.last_seq!=entity.applied_seq) {
             entity.applied_seq=entity.last_seq;
@@ -500,6 +523,7 @@ void Scene::step(double dt) {
         }
     }
     if (config_.combat_enabled) step_npcs(dt);
+    if (config_.abilities_enabled) step_abilities(dt);
 }
 
 Json Scene::view(Entity& entity) {
@@ -523,6 +547,7 @@ Json Scene::view(Entity& entity) {
     if (!config_.combat_enabled) {
         result["self"].erase("combat"); result.erase("mobs"); result.erase("skills"); result.erase("events");
     }
+    if (config_.abilities_enabled) ability_view(result, entity);
     // 为自身和元数据预留空间；极端长名字、满员 AOI 也不超过客户端 64KiB 帧上限。
     std::size_t used = result.dump(-1, ' ', true).size() + entity.role.json(false).dump(-1, ' ', true).size() + 1;
     auto self_summary=entity.role.json(false);
@@ -551,9 +576,10 @@ Json Scene::view(Entity& entity) {
 }
 
 void Scene::emit(const std::string& type, const std::string& source, const std::string& target,
-    const std::string& skill, int value, double x, double y) {
+    const std::string& skill, int value, double x, double y, const std::string& object_id) {
     events_.push_back({{"id", ++next_event_id_}, {"type", type}, {"source_id", source},
         {"target_id", target}, {"skill_id", skill}, {"value", value}, {"x", x}, {"y", y}, {"tick", tick_}});
+    if (!object_id.empty()) events_.back()["object_id"] = object_id;
     while (events_.size() > 32) events_.pop_front();
 }
 
@@ -572,6 +598,7 @@ void Scene::damage_npc(Entity& entity, Npc& npc, const std::string& skill, int a
 }
 
 Json Scene::cast(Entity& entity, const Json& request) {
+    if (config_.abilities_enabled) return cast_ability(entity, request);
     auto seq = integer_field(request, "seq");
     auto skill_id = string_field(request, "skill_id", 32);
     std::string target;
@@ -646,19 +673,25 @@ Json Scene::cast(Entity& entity, const Json& request) {
 Json Scene::revive(Entity& entity, const Json& request) {
     auto seq = integer_field(request, "seq");
     auto& combat = entity.role.combat;
+    auto reject = [&](const char* reason) -> Json {
+        return {{"accepted",false},{"reason",reason},{"seq",seq},{"role",entity.role.json()},
+            {"retry_after_ms",milliseconds(combat.revive_remaining)},{"tick",tick_},{"world_epoch",world_epoch_}};
+    };
     if (seq <= combat.last_action_seq) {
         if (seq == combat.last_action_seq && entity.last_action_key == "revive" && !entity.last_action_result.is_null())
             return entity.last_action_result;
+        if (config_.abilities_enabled) return reject("stale_action_seq");
         throw Error(409, "old action sequence; action was not repeated");
     }
-    if (!combat.dead) throw Error(409, "player is not dead");
-    if (combat.revive_remaining > 1e-7) throw Error(409, "revive is not ready");
+    if (!combat.dead) {if (config_.abilities_enabled) return reject("not_dead");throw Error(409, "player is not dead");}
+    if (combat.revive_remaining > 1e-7) {if (config_.abilities_enabled) return reject("revive_not_ready");throw Error(409, "revive is not ready");}
     combat.hp = 180; combat.mp = 100; combat.dead = false; combat.revive_remaining = 0;
     combat.last_action_seq = seq; changed(combat);
     entity.role.x = entity.role.y = 0;
     entity.dx = entity.dy = 0; entity.input_age = 1; entity.lease_age = 0;
     emit("revive", entity.role.role_id, entity.role.role_id, "", 180, 0, 0);
     Json result{{"accepted", true}, {"seq", seq}, {"role", entity.role.json()}, {"tick", tick_}};
+    if (config_.abilities_enabled) result["world_epoch"] = world_epoch_;
     entity.last_action_key = "revive"; entity.last_action_result = result;
     return result;
 }
@@ -735,10 +768,13 @@ void Scene::step_npcs(double dt) {
         double distance = std::hypot(entity.role.x - npc.x, entity.role.y - npc.y);
         if (distance > 2) {
             double travel = std::min(npc.speed * dt, distance - 1.5);
-            npc.x += (entity.role.x - npc.x) * travel / distance;
-            npc.y += (entity.role.y - npc.y) * travel / distance;
+            const auto position = wall_move(npc.x, npc.y, npc.x + (entity.role.x - npc.x) * travel / distance,
+                npc.y + (entity.role.y - npc.y) * travel / distance, 0.6);
+            npc.x = position.first; npc.y = position.second;
         }
-        if (std::hypot(entity.role.x - npc.x, entity.role.y - npc.y) <= 2 && npc.attack_remaining <= 1e-7) {
+        const auto clear = wall_move(npc.x, npc.y, entity.role.x, entity.role.y, 0);
+        if (std::hypot(entity.role.x - npc.x, entity.role.y - npc.y) <= 2 && npc.attack_remaining <= 1e-7 &&
+            std::hypot(clear.first-entity.role.x, clear.second-entity.role.y)<1e-6) {
             damage_player(npc, entity);
             npc.attack_remaining = npc.attack_period;
         }
