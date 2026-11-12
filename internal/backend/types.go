@@ -103,6 +103,7 @@ type transferRequest struct {
 	Ref
 	TargetSceneID string `json:"target_scene_id"`
 	RequestID     string `json:"request_id"`
+	Restart       bool   `json:"restart,omitempty"`
 }
 
 type transferRef struct {

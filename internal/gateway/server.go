@@ -56,6 +56,8 @@ type View struct {
 	ConfigVersion        string          `json:"config_version,omitempty"`
 	ConfigGeneration     uint64          `json:"config_generation,omitempty"`
 	ConfigAppliedTick    uint64          `json:"config_applied_tick,omitempty"`
+	Features             []string        `json:"features,omitempty"`
+	Battle               json.RawMessage `json:"battle,omitempty"`
 }
 type Request struct {
 	ID              string   `json:"id"`
@@ -71,6 +73,10 @@ type Request struct {
 	TargetID        string   `json:"target_id,omitempty"`
 	X               *float64 `json:"x,omitempty"`
 	Y               *float64 `json:"y,omitempty"`
+	SceneID         string   `json:"scene_id,omitempty"`
+	OwnerEpoch      *int64   `json:"owner_epoch,omitempty"`
+	Element         string   `json:"element,omitempty"`
+	receivedRoute   *connectionRoute
 	receivedAt      time.Time
 	validationError string
 }
@@ -83,7 +89,7 @@ type Response struct {
 }
 type Config struct {
 	Listen, HealthListen, BackendURL, Token, CertFile, KeyFile string
-	Profile, LoginScene                                        string
+	Profile, LoginScene, ArenaScene                            string
 	TraceMovement                                              bool
 }
 type Server struct {
@@ -108,14 +114,17 @@ func env(key, fallback string) string {
 	return fallback
 }
 func FromEnv() (*Server, error) {
-	return New(Config{Listen: env("GATEWAY_LISTEN", "127.0.0.1:7000"), HealthListen: env("GATEWAY_HEALTH_LISTEN", "127.0.0.1:8080"), BackendURL: env("BACKEND_URL", "http://127.0.0.1:8081"), Token: os.Getenv("INTERNAL_TOKEN"), CertFile: os.Getenv("TLS_CERT_FILE"), KeyFile: os.Getenv("TLS_KEY_FILE"), Profile: env("GATEWAY_PROFILE", "full"), LoginScene: os.Getenv("GATEWAY_LOGIN_SCENE"), TraceMovement: os.Getenv("TRACE_MOVEMENT") == "true"})
+	return New(Config{Listen: env("GATEWAY_LISTEN", "127.0.0.1:7000"), HealthListen: env("GATEWAY_HEALTH_LISTEN", "127.0.0.1:8080"), BackendURL: env("BACKEND_URL", "http://127.0.0.1:8081"), Token: os.Getenv("INTERNAL_TOKEN"), CertFile: os.Getenv("TLS_CERT_FILE"), KeyFile: os.Getenv("TLS_KEY_FILE"), Profile: env("GATEWAY_PROFILE", "full"), LoginScene: os.Getenv("GATEWAY_LOGIN_SCENE"), ArenaScene: os.Getenv("GATEWAY_ARENA_SCENE"), TraceMovement: os.Getenv("TRACE_MOVEMENT") == "true"})
 }
 func New(c Config) (*Server, error) {
 	if c.Profile == "" {
 		c.Profile = "full"
 	}
-	if c.Profile != "full" && c.Profile != "movement" && c.Profile != "abilities" {
-		return nil, errors.New("GATEWAY_PROFILE 必须为 full、movement 或 abilities")
+	if c.Profile != "full" && c.Profile != "movement" && c.Profile != "abilities" && c.Profile != "elemental" {
+		return nil, errors.New("GATEWAY_PROFILE 必须为 full、movement、abilities 或 elemental")
+	}
+	if c.Profile == "elemental" && (c.LoginScene == "" || c.ArenaScene == "" || len(c.ArenaScene) > 64 || c.ArenaScene == c.LoginScene) {
+		return nil, errors.New("elemental profile requires distinct login and arena scenes")
 	}
 	if len(c.LoginScene) > 64 {
 		return nil, errors.New("GATEWAY_LOGIN_SCENE 过长")
@@ -406,6 +415,9 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				return
 			}
 			r.receivedAt = time.Now()
+			if s.cfg.Profile == "elemental" {
+				r.receivedRoute = published.Load()
+			}
 			if r.Op == "cast" && (r.SkillID == "arc_bolt" || r.SkillID == "stone_wall") {
 				var fields map[string]json.RawMessage
 				json.Unmarshal(scanner.Bytes(), &fields)
@@ -538,6 +550,12 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				}
 				continue
 			}
+			if s.cfg.Profile == "elemental" && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "enter_arena" && req.Op != "leave_arena" && req.Op != "restart_battle" {
+				if !write(Response{ID: req.ID, Op: req.Op, Error: "operation is not available in elemental profile"}) {
+					return
+				}
+				continue
+			}
 			var err error
 			switch req.Op {
 			case "ping":
@@ -547,6 +565,9 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				}
 				if s.cfg.Profile == "abilities" {
 					data["protocol_version"] = "webgl-combat-v1"
+				}
+				if s.cfg.Profile == "elemental" {
+					data["protocol_version"] = "webgl-elemental-v1"
 				}
 				resp.Data = data
 			case "register":
@@ -560,7 +581,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				}
 				var out Route
 				err = s.call(serviceCtx, s.cfg.BackendURL, "/v1/login", map[string]any{"token": req.Token}, &out)
-				if err == nil && s.cfg.LoginScene != "" && out.Role.Scene != s.cfg.LoginScene {
+				if err == nil && s.cfg.LoginScene != "" && out.Role.Scene != s.cfg.LoginScene && !(s.cfg.Profile == "elemental" && out.Role.Scene == s.cfg.ArenaScene) {
 					payload := ref(out.Role)
 					payload["target_scene_id"] = s.cfg.LoginScene
 					payload["request_id"] = fmt.Sprintf("entry-%s-%d", out.Role.ID, out.Role.Session)
@@ -572,11 +593,51 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 					nextSession = time.Now().Add(time.Second)
 					publish(route)
 					resp.Data = s.clientRole(out.Role)
+					if s.cfg.Profile == "elemental" && out.Role.Scene == s.cfg.ArenaScene {
+						var v View
+						err = s.sceneCall(ctx, out, "/v1/view", ref(out.Role), &v)
+						if err == nil {
+							overlayBalance(&v, out.Role)
+							lastView = &v
+							resp.Data = s.clientView(v).Self
+						}
+					}
 				}
 			default:
 				if route == nil {
 					err = errors.New("login required")
 					break
+				}
+				if s.cfg.Profile == "elemental" && (req.Op == "cast" || req.Op == "enter_arena" || req.Op == "leave_arena" || req.Op == "restart_battle") {
+					changingOwner := req.Op != "cast"
+					if changingOwner {
+						moveBarrier.Lock()
+					}
+					var out any
+					out, err = s.elementalOperation(serviceCtx, req, route)
+					if err == nil {
+						if next, ok := out.(Route); ok {
+							route = &next
+							lastView = nil
+							publish(route)
+							resp.Data = map[string]any{"accepted": true, "reason": ""}
+							nextView = time.Now()
+						} else {
+							resp.Data = out
+						}
+					}
+					if changingOwner {
+						moveBarrier.Unlock()
+					}
+					if err != nil {
+						resp.OK = false
+						resp.Error = err.Error()
+						resp.Data = nil
+					}
+					if !write(resp) {
+						return
+					}
+					continue
 				}
 				switch req.Op {
 				case "cast", "revive":

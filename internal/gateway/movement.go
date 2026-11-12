@@ -21,7 +21,7 @@ func sameRole(a, b Role) bool {
 }
 
 func (s *Server) clientRole(role Role) Role {
-	if s.cfg.Profile == "movement" {
+	if s.cfg.Profile == "movement" || s.cfg.Profile == "elemental" {
 		role.Combat = nil
 	}
 	return role
@@ -40,6 +40,10 @@ func (s *Server) clientView(view View) View {
 		view.PVPEnabled = nil
 		view.ProjectilesTruncated, view.EventsTruncated = false, false
 		view.EventCursor = 0
+		view.Features, view.Battle = nil, nil
+	}
+	if s.cfg.Profile == "elemental" || (s.cfg.Profile != "movement" && len(view.Battle) > 0) {
+		return elementalClientView(view)
 	}
 	return view
 }
@@ -69,6 +73,29 @@ func (s *Server) moveWorker(ctx context.Context, queue <-chan Request, published
 		started := time.Now()
 		var failure error
 		var results []Response
+		var rejected []Response
+		if s.cfg.Profile == "elemental" {
+			kept := batch[:0]
+			for _, request := range batch {
+				if request.receivedRoute == nil {
+					rejected = append(rejected, Response{ID: request.ID, Op: "move", Error: "login required"})
+				} else if current == nil || !sameRole(request.receivedRoute.Route.Role, current.Route.Role) {
+					rejected = append(rejected, Response{ID: request.ID, Op: "move", OK: true, Data: elementalRejected("scene_changed")})
+				} else {
+					kept = append(kept, request)
+				}
+			}
+			batch = kept
+			if len(batch) == 0 {
+				barrier.Unlock()
+				for _, response := range rejected {
+					if !write(response) {
+						return
+					}
+				}
+				continue
+			}
+		}
 		if current == nil {
 			failure = errors.New("login required")
 		} else if started.After(current.ValidUntil) {
@@ -103,6 +130,11 @@ func (s *Server) moveWorker(ctx context.Context, queue <-chan Request, published
 		barrier.Unlock()
 		if ctx.Err() != nil {
 			return
+		}
+		for _, response := range rejected {
+			if !write(response) {
+				return
+			}
 		}
 		for i, request := range batch {
 			response := Response{ID: request.ID, Op: "move"}

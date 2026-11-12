@@ -87,7 +87,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-}
       MYSQL_TLS: ${MYSQL_TLS:-false}
-      SCENES: scene-1=http://scene1:9001,scene-2=http://scene2:9002,scene-webgl=http://scene-webgl:9003,scene-combat=http://scene-combat:9004
+      SCENES: scene-1=http://scene1:9001,scene-2=http://scene2:9002,scene-webgl=http://scene-webgl:9003,scene-combat=http://scene-combat:9004,scene-elemental-world=http://scene-elemental:9005,scene-elemental-arena=http://scene-elemental:9005
     ports:
       - "127.0.0.1:8081:8081"
     volumes:
@@ -100,6 +100,8 @@ services:
       scene-webgl:
         condition: service_healthy
       scene-combat:
+        condition: service_healthy
+      scene-elemental:
         condition: service_healthy
     healthcheck:
       test: [CMD, curl, --fail, --silent, --max-time, "2", "http://127.0.0.1:8081/healthz"]
@@ -193,6 +195,45 @@ services:
       MOVE_SPEED: "6"
     ports:
       - "127.0.0.1:9004:9004"
+
+  scene-elemental:
+    <<: *scene
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set the shared random INTERNAL_TOKEN}
+      SCENE_ID: scene-elemental-world
+      SCENE_HOST: 0.0.0.0
+      SCENE_PORT: "9005"
+      SCENE_MODE: elemental
+      ELEMENTAL_ARENA_ID: scene-elemental-arena
+      TICK_HZ: "20"
+      AOI_RADIUS: "30"
+      MOVE_SPEED: "6"
+    ports:
+      - "127.0.0.1:9005:9005"
+
+  gateway-elemental:
+    <<: *runtime
+    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_IMAGE_TAG:-dev}
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set the shared random INTERNAL_TOKEN}
+      BACKEND_URL: http://backend:8081
+      GATEWAY_LISTEN: 0.0.0.0:7000
+      GATEWAY_HEALTH_LISTEN: 0.0.0.0:8080
+      GATEWAY_PROFILE: elemental
+      GATEWAY_LOGIN_SCENE: scene-elemental-world
+      GATEWAY_ARENA_SCENE: scene-elemental-arena
+    ports:
+      - "127.0.0.1:7005:7000"
+      - "127.0.0.1:8085:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   gateway-combat:
     <<: *runtime

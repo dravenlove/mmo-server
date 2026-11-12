@@ -222,6 +222,7 @@ Json Scene::Npc::json() const {
 
 Scene::Scene(Config config) : config_(std::move(config)) {
     if (config_.abilities_enabled && !config_.combat_enabled) throw std::invalid_argument("abilities require combat mode");
+    if (config_.elemental_enabled && config_.combat_enabled) throw std::invalid_argument("elemental mode must isolate persistent combat");
     std::random_device random;
     world_epoch_ = std::to_string(random()) + "-" + std::to_string(random());
     combat_config_ = validate_config(config_.combat_config.is_null() ? default_combat_config() : config_.combat_config);
@@ -256,7 +257,8 @@ Role Scene::parse_role(const Json& request) const {
         role.combat.cooldowns["arc_bolt"] = role.combat.cooldowns["stone_wall"] = 0;
         changed(role.combat);
     }
-    if (role.scene_id != config_.scene_id) throw Error(409, "scene mismatch");
+    if (role.scene_id != config_.scene_id && !(config_.elemental_enabled && role.scene_id == config_.elemental_arena_id)) throw Error(409, "scene mismatch");
+    if (config_.elemental_enabled && role.role_id.size()>64) throw Error(400,"elemental role id exceeds 64 bytes");
     return role;
 }
 
@@ -318,6 +320,7 @@ Json Scene::enter(const Json& request) {
             changed(entity.role.combat);
             entity.last_action_key.clear();
             entity.last_action_result = Json();
+            entity.elemental_requests.clear(); entity.elemental_request_order.clear();
             entity.last_seq = entity.applied_seq = 0;
             entity.dx = entity.dy = 0;
             entity.input_age = 1;
@@ -330,6 +333,7 @@ Json Scene::enter(const Json& request) {
     admit(role);
     Entity entity;
     entity.role = role;
+    initialize_elemental(entity);
     entities_.emplace(role.role_id, std::move(entity));
     return {{"role", role.json()}};
 }
@@ -340,6 +344,19 @@ Json Scene::prepare(const Json& request) {
     auto it = entities_.find(role.role_id);
     if (it != entities_.end()) {
         const auto& entity = it->second;
+        if (config_.elemental_enabled && role.owner_epoch>entity.role.owner_epoch && entity.mode==Mode::Frozen && entity.transfer_id==transfer && role.session_epoch==entity.role.session_epoch) {
+            if (role.owner_epoch<=removed_epochs_[role.role_id]) throw Error(409,"removed owner epoch");
+            auto pending=elemental_prepared_.find(role.role_id);
+            if (pending!=elemental_prepared_.end()) {
+                if (!same_ref(pending->second.role,role) || pending->second.transfer_id!=transfer) throw Error(409,"conflicting prepared elemental role");
+                return {{"role",pending->second.role.json()}};
+            }
+            Entity candidate;candidate.role=role;candidate.mode=Mode::Prepared;candidate.transfer_id=transfer;
+            candidate.last_seq=entity.last_seq;candidate.applied_seq=entity.applied_seq;
+            initialize_elemental(candidate);
+            elemental_prepared_.emplace(role.role_id,std::move(candidate));
+            return {{"role",role.json()}};
+        }
         if (!same_ref(entity.role, role) || entity.transfer_id != transfer || entity.mode == Mode::Frozen || entity.cancelled_transfers.count(transfer))
             throw Error(409, "conflicting prepared role");
         return {{"role", entity.role.json()}};
@@ -349,8 +366,34 @@ Json Scene::prepare(const Json& request) {
     entity.role = role;
     entity.mode = Mode::Prepared;
     entity.transfer_id = transfer;
+    initialize_elemental(entity);
     entities_.emplace(role.role_id, std::move(entity));
     return {{"role", role.json()}};
+}
+
+void Scene::initialize_elemental(Entity& entity) {
+    if (config_.elemental_enabled && entity.role.scene_id==config_.elemental_arena_id)
+        entity.elemental.emplace("e-"+world_epoch_+"-"+std::to_string(++next_elemental_id_),entity.role.role_id);
+}
+
+Json Scene::cast_elemental(Entity& entity,const Json& request) {
+    const auto id=string_field(request,"request_id",64),element=string_field(request,"element",32);
+    const double x=real_field(request,"x",1000000),y=real_field(request,"y",1000000);
+    if (std::floor(x)!=x || std::floor(y)!=y) throw Error(400,"elemental targets must be integer cells");
+    if (string_field(request,"scene_id",64)!=entity.role.scene_id) return {{"accepted",false},{"reason","scene_changed"}};
+    if (!entity.elemental) return {{"accepted",false},{"reason","outside_arena"}};
+    const auto key=Json{{"element",element},{"x",x},{"y",y}}.dump();
+    auto previous=entity.elemental_requests.find(id);
+    if (previous!=entity.elemental_requests.end()) {
+        if (previous->second.first!=key) return {{"accepted",false},{"reason","request_conflict"}};
+        return previous->second.second;
+    }
+    const auto reason=entity.elemental->cast(element,static_cast<int>(x),static_cast<int>(y));
+    Json result{{"accepted",reason.empty()},{"reason",reason}};
+    entity.elemental_requests.emplace(id,std::make_pair(key,result));entity.elemental_request_order.push_back(id);
+    while (entity.elemental_request_order.size()>64) {entity.elemental_requests.erase(entity.elemental_request_order.front());entity.elemental_request_order.pop_front();}
+    entity.lease_age=0;
+    return result;
 }
 
 Json Scene::config_status() const {
@@ -391,6 +434,7 @@ Json Scene::reload_config(const Json& request, bool validate_only) {
 
 Json Scene::execute(const std::string& path, const Json& request) {
     if (!request.is_object()) throw Error(400, "JSON object required");
+    if (path=="/v1/capabilities") return {{"owner_rotation",config_.elemental_enabled}};
     if (path == "/v1/config/status") {
         if (!request.empty()) throw Error(400, "config status takes an empty object");
         return config_status();
@@ -403,6 +447,21 @@ Json Scene::execute(const std::string& path, const Json& request) {
         auto id = string_field(request, "role_id");
         auto owner = integer_field(request, "owner_epoch");
         auto session = integer_field(request, "session_epoch");
+        if (config_.elemental_enabled) {
+            auto pending=elemental_prepared_.find(id);
+            if (pending!=elemental_prepared_.end() && pending->second.role.owner_epoch==owner && pending->second.role.session_epoch==session) {
+                if (request.contains("transfer_id") && pending->second.transfer_id!=string_field(request,"transfer_id")) throw Error(409,"transfer conflict");
+                elemental_prepared_.erase(pending);removed_epochs_[id]=std::max(removed_epochs_[id],owner);
+                return {{"accepted",true}};
+            }
+            auto current=entities_.find(id);
+            if (current!=entities_.end() && owner!=current->second.role.owner_epoch && removed_epochs_[id]>=owner)
+                return {{"accepted",true}};
+            if (current!=entities_.end() && owner<current->second.role.owner_epoch) {
+                removed_epochs_[id]=std::max(removed_epochs_[id],owner);
+                return {{"accepted",true}};
+            }
+        }
         auto it = entities_.find(id);
         if (it != entities_.end()) {
             if (it->second.role.owner_epoch != owner || it->second.role.session_epoch != session)
@@ -440,6 +499,17 @@ Json Scene::execute(const std::string& path, const Json& request) {
         }
         return {{"results",results}};
     }
+    if (config_.elemental_enabled && path=="/v1/activate") {
+        const auto id=string_field(request,"role_id");const auto owner=integer_field(request,"owner_epoch");
+        auto pending=elemental_prepared_.find(id);
+        if (pending!=elemental_prepared_.end() && pending->second.role.owner_epoch==owner && pending->second.role.session_epoch==integer_field(request,"session_epoch")) {
+            if (pending->second.transfer_id!=string_field(request,"transfer_id")) throw Error(409,"transfer conflict");
+            auto next=std::move(pending->second);elemental_prepared_.erase(pending);next.mode=Mode::Active;next.lease_age=0;
+            entities_.insert_or_assign(id,std::move(next));
+            return {{"role",entities_.at(id).role.json()}};
+        }
+    }
+    if (config_.elemental_enabled && path=="/v1/elemental_cast") return cast_elemental(matching(request,true),request);
     if (!config_.combat_enabled && (path=="/v1/cast" || path=="/v1/revive")) throw Error(409,"combat is disabled in this scene");
     auto& entity = matching(request, path == "/v1/move" || path == "/v1/view" || path == "/v1/cast" || path == "/v1/revive");
     if (path == "/v1/cast") return cast(entity, request);
@@ -458,6 +528,7 @@ Json Scene::execute(const std::string& path, const Json& request) {
         entity.trace_id = request.contains("trace_id") && request["trace_id"].is_string() ? request["trace_id"].get<std::string>().substr(0,64) : "";
         entity.dx = dx;
         entity.dy = dy;
+        if (entity.elemental && !entity.elemental->playing()) entity.dx=entity.dy=0;
         entity.input_age = 0;
         entity.lease_age = 0;
         return {{"accepted", true}};
@@ -483,6 +554,7 @@ Json Scene::execute(const std::string& path, const Json& request) {
         auto transfer = string_field(request, "transfer_id");
         if (entity.mode == Mode::Prepared || (entity.mode == Mode::Frozen && entity.transfer_id != transfer))
             throw Error(409, "transfer conflict");
+        if (config_.elemental_enabled && entity.transfer_id==transfer) entity.connected=true;
         // 达到上限后 freeze 已统一拒绝，因此无需无限保存新的取消标记。
         if (entity.cancelled_transfers.size() < 256) entity.cancelled_transfers.insert(transfer);
         entity.mode = Mode::Active;
@@ -509,6 +581,17 @@ void Scene::step(double dt) {
         auto& entity = pair.second;
         if (entity.mode != Mode::Active) continue;
         entity.lease_age = std::min(4.0, entity.lease_age + dt);
+        if (entity.elemental) {
+            if (entity.connected && entity.lease_age<=3) {
+                entity.elemental_clock+=dt;
+                while (entity.elemental_clock+.000000001>=.05) {
+                    const bool moving=entity.input_age<.25-1e-9;
+                    entity.elemental->step(moving?entity.dx:0,moving?entity.dy:0);
+                    entity.input_age=std::min(1.,entity.input_age+.05);entity.elemental_clock-=.05;
+                }
+            }
+            continue;
+        }
         if (config_.combat_enabled) step_combat(entity, dt);
         // 输入失联后最多继续移动 250ms，避免网关断开留下无限移动角色。
         double elapsed = entity.connected ? std::min(dt, std::max(0.0, 0.25 - entity.input_age)) : 0;
@@ -541,13 +624,17 @@ Json Scene::view(Entity& entity) {
     }
     for (const auto& skill : skills) catalog.push_back(configured_skill(skill, combat_config_).json());
     Json result{{"self", entity.role.json()}, {"players", players}, {"tick", tick_},
-        {"scene_id", config_.scene_id}, {"mobs", mobs}, {"skills", catalog}, {"events", events},
+        {"scene_id", entity.role.scene_id}, {"mobs", mobs}, {"skills", catalog}, {"events", events},
         {"config_version", combat_config_["version"]}, {"config_generation", config_generation_},
         {"config_applied_tick", config_applied_tick_}};
     if (!config_.combat_enabled) {
         result["self"].erase("combat"); result.erase("mobs"); result.erase("skills"); result.erase("events");
     }
     if (config_.abilities_enabled) ability_view(result, entity);
+    if (config_.elemental_enabled) {
+        result["features"]=Json::array({"elemental_arena_v1"});
+        if (entity.elemental) result["battle"]=entity.elemental->json();
+    }
     // 为自身和元数据预留空间；极端长名字、满员 AOI 也不超过客户端 64KiB 帧上限。
     std::size_t used = result.dump(-1, ' ', true).size() + entity.role.json(false).dump(-1, ' ', true).size() + 1;
     auto self_summary=entity.role.json(false);
@@ -557,7 +644,7 @@ Json Scene::view(Entity& entity) {
     bool truncated = false;
     for (const auto& pair : entities_) {
         const auto& other = pair.second;
-        if (other.role.role_id==entity.role.role_id || other.mode != Mode::Active || !other.connected || other.lease_age>3 || !visible(other.role.x, other.role.y)) continue;
+        if (other.role.role_id==entity.role.role_id || other.mode != Mode::Active || !other.connected || other.lease_age>3 || !visible(other.role.x, other.role.y) || other.role.scene_id!=entity.role.scene_id || entity.elemental) continue;
         ++visible_count;
         auto summary = other.role.json(false);
         if (!config_.combat_enabled) summary.erase("combat");

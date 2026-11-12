@@ -5,6 +5,16 @@
 
 
 
+## 2026-11-12：元素试炼场本机接入验证
+
+按 AXIOMANCY `45cde2405bfbed3b2bd814518775159d43f5f636` 元素协议实现独立单人试炼。C++ 元素核心与该客户端 `CombatSimulation.cs` / `LocalElementalAuthority.cs` 生成的 22 组参考快照逐字段比对通过，浮点绝对容差 0.0005；原始参考保存在 `scene/tests/elemental_reference.json`，两份参考源文件与该客户端提交一致。范围包含轴向转换、水火蒸汽、燃烧蔓延、四邻导电、冷却、自伤和终局冻结，另验证合法胜利。
+
+8 项 CTest、Go 全包测试与 vet 通过。新增同进程候选归属替换与墓碑幂等删除，Backend 在场景声明支持后才允许同场景归属轮换；移动队列拒绝跨归属的旧请求，原有 15 项跨进程 smoke 与弹道/墙体 WebSocket 回归通过。
+
+`scripts/smoke_elemental.py` 在临时 SQLite、随机端口、真实 C++/Backend/Gateway 和 WebSocket 中验证能力声明、双账号个人实例隔离、正常拒绝、元素反应、死亡、重开新 ID/新归属、登录会话保持、移动序号连续与退出位置恢复。故障代理另外验证准备响应丢失后的安全撤销、解冻响应丢失加客户端断线后的重新登录恢复，以及归属提交后激活响应丢失的恢复。报告为 `output/elemental-smoke-20261112-160839/report.json`。
+
+服务端生成的 19 份完整视图（14 份试炼视图、两个角色）通过当前客户端独立 `GatewayProtocol/PlayerSnapshot/AoiWorld/ElementalBattleSnapshot` 解析器；没有修改客户端源码或运行 Unity 构建。该结果不代表浏览器真实操作、云构建或线上部署已经验收；发布与公网结果另行记录。联调与持久化边界见 [WEBGL_ELEMENTAL_HANDOFF.md](WEBGL_ELEMENTAL_HANDOFF.md)。
+
 ## 2026-11-12：核心战斗 v1 发布与公网验收
 
 源码 `82ec8743e470063a3986eee66879ceec4f296fff`，镜像 `combat-20261112-v1`。[Linux 发行运行 43149692964](https://github.com/dravenlove/mmo-server/actions/runs/43149692964)全部成功，覆盖 Go/race/vet、7 项 CTest、SQLite 与 MySQL 容器持久化/重启恢复、独立 Auth、原移动 WebSocket 与新战斗 WebSocket 双角色集成，以及四镜像匿名拉取。

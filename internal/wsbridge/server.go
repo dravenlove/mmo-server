@@ -57,7 +57,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.ProtocolVersion == "" {
 		cfg.ProtocolVersion = "webgl-movement-v1"
 	}
-	if cfg.ProtocolVersion != "webgl-movement-v1" && cfg.ProtocolVersion != "webgl-combat-v1" {
+	if cfg.ProtocolVersion != "webgl-movement-v1" && cfg.ProtocolVersion != "webgl-combat-v1" && cfg.ProtocolVersion != "webgl-elemental-v1" {
 		return nil, errors.New("unsupported WebSocket protocol version")
 	}
 	s := &Server{cfg: cfg, clients: make(map[*websocket.Conn]net.Conn), origins: make(map[string]bool)}

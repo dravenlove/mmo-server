@@ -62,8 +62,19 @@ func (s *Server) transfer(ctx context.Context, raw json.RawMessage) (any, error)
 	if req.Ref != r.Ref() {
 		return nil, conflict("角色归属已变化，请刷新会话路由")
 	}
-	if r.SceneID == req.TargetSceneID {
+	if r.SceneID == req.TargetSceneID && !req.Restart {
 		return nil, bad("角色已在目标场景")
+	}
+	if req.Restart {
+		if r.SceneID != req.TargetSceneID {
+			return nil, bad("归属轮换必须使用当前场景")
+		}
+		var capabilities struct {
+			OwnerRotation bool `json:"owner_rotation"`
+		}
+		if err := s.callScene(ctx, r.SceneID, "capabilities", map[string]any{}, &capabilities); err != nil || !capabilities.OwnerRotation {
+			return nil, bad("当前场景不支持同场景归属轮换")
+		}
 	}
 	m, err := s.beginMigration(ctx, r, req)
 	if err != nil {

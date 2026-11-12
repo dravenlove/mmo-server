@@ -201,6 +201,25 @@ func newFixture(t *testing.T) *fixture {
 	return f
 }
 
+func TestSameSceneRotationRequiresSceneCapability(t *testing.T) {
+	f := newFixture(t)
+	_, route := registerLogin(t, f, "rotation-guard")
+	req := transferRequest{Ref: route.Role.Ref(), TargetSceneID: route.Role.SceneID, RequestID: "unsupported-rotation", Restart: true}
+	wantPost(t, f.s, "transfer", req, 400, nil)
+	r, err := f.s.role(context.Background(), route.Role.RoleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Ref() != route.Role.Ref() {
+		t.Fatal("unsupported rotation changed ownership")
+	}
+	f.source.mu.Lock()
+	defer f.source.mu.Unlock()
+	if f.source.players[r.RoleID].State != "active" {
+		t.Fatal("unsupported rotation froze original actor")
+	}
+}
+
 func (f *fixture) restart(t *testing.T) {
 	t.Helper()
 	if err := f.s.Close(); err != nil {

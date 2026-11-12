@@ -113,7 +113,7 @@ public:
 
     mmo::Json health() const {
         return {{"ok", true}, {"scene_id", config_.scene_id},
-                {"tick", tick_.load()}, {"players", players_.load()}, {"mode",config_.abilities_enabled?"abilities":config_.combat_enabled?"combat":"movement"}};
+                {"tick", tick_.load()}, {"players", players_.load()}, {"mode",config_.elemental_enabled?"elemental":config_.abilities_enabled?"abilities":config_.combat_enabled?"combat":"movement"}};
     }
 
 private:
@@ -200,14 +200,18 @@ int main(int argc, char** argv) {
         config.scene_id = environment("SCENE_ID", "scene-1");
         if (config.scene_id.empty() || config.scene_id.size() > 128) throw std::runtime_error("invalid SCENE_ID");
         const auto mode=environment("SCENE_MODE", "combat");
-        if (mode!="combat" && mode!="movement" && mode!="abilities") throw std::invalid_argument("SCENE_MODE must be combat, movement or abilities");
-        config.combat_enabled=mode!="movement";
+        if (mode!="combat" && mode!="movement" && mode!="abilities" && mode!="elemental") throw std::invalid_argument("SCENE_MODE must be combat, movement, abilities or elemental");
+        config.combat_enabled=mode=="combat" || mode=="abilities";
         config.abilities_enabled=mode=="abilities";
+        config.elemental_enabled=mode=="elemental";
+        config.elemental_arena_id=environment("ELEMENTAL_ARENA_ID","scene-elemental-arena");
+        if (config.elemental_enabled && (config.elemental_arena_id.empty() || config.elemental_arena_id.size()>64 || config.elemental_arena_id==config.scene_id)) throw std::invalid_argument("invalid ELEMENTAL_ARENA_ID");
         const auto pvp=environment("PVP_ENABLED","true");
         if (pvp!="true" && pvp!="false") throw std::invalid_argument("PVP_ENABLED must be true or false");
         config.pvp_enabled=pvp=="true";
         config.trace_movement=environment("TRACE_MOVEMENT","false")=="true";
         config.tick_hz = integer_env("TICK_HZ", "20", 1, 120);
+        if (config.elemental_enabled && config.tick_hz!=20) throw std::invalid_argument("elemental protocol requires 20Hz");
         config.aoi_radius = number_env("AOI_RADIUS", "30", 1, 1000);
         config.move_speed = number_env("MOVE_SPEED", "6", 0.01, 100);
         const auto combat_config_path = environment("COMBAT_CONFIG_FILE", "");
@@ -241,7 +245,7 @@ int main(int argc, char** argv) {
             reply(response, 200, runtime.health());
         });
 
-        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/move_batch", "/v1/disconnect", "/v1/view", "/v1/cast", "/v1/revive", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove",
+        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/move_batch", "/v1/disconnect", "/v1/view", "/v1/cast", "/v1/elemental_cast", "/v1/capabilities", "/v1/revive", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove",
                 "/v1/config/status", "/v1/config/reload", "/v1/config/apply", "/v1/config/validate"}) {
             server.Post(path, [&, path](const httplib::Request& request, httplib::Response& response) {
                 if (!token_matches(request.get_header_value("X-Internal-Token"), token)) {

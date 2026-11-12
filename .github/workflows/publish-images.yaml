@@ -49,6 +49,11 @@ jobs:
           cmake --build build/scene-ci --parallel 2
           ctest --test-dir build/scene-ci --output-on-failure
           python3 scripts/test_config_tool.py
+          mkdir -p bin
+          go build -o bin/backend ./cmd/backend
+          go build -o bin/gateway ./cmd/gateway
+          cp build/scene-ci/scene-server bin/scene-server
+          python3 scripts/smoke_elemental.py
 
       - name: Build and verify Linux image packages
         run: python3 scripts/package_images.py --tag "$IMAGE_TAG" --platform linux/amd64

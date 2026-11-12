@@ -3,11 +3,13 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <nlohmann/json.hpp>
+#include "elemental.hpp"
 
 namespace mmo {
 using Json = nlohmann::json;
@@ -27,6 +29,8 @@ struct Config {
     bool combat_enabled = true;
     bool abilities_enabled = false;
     bool pvp_enabled = true;
+    bool elemental_enabled = false;
+    std::string elemental_arena_id = "scene-elemental-arena";
     bool trace_movement = false;
     Json combat_config; // 未设置时使用内置数值；启动文件由 HTTP 外层读取。
 };
@@ -70,6 +74,10 @@ private:
         bool connected = true;
         std::string last_action_key;
         Json last_action_result;
+        std::optional<ElementalBattle> elemental;
+        double elemental_clock = 0;
+        std::map<std::string, std::pair<std::string, Json>> elemental_requests;
+        std::deque<std::string> elemental_request_order;
     };
     struct Npc {
         std::string id, name, kind, target_id;
@@ -95,6 +103,8 @@ private:
     };
     Config config_;
     std::map<std::string, Entity> entities_;
+    // 同进程的自由区/个人副本迁移保留冻结源，提交后再交换候选对象。
+    std::map<std::string, Entity> elemental_prepared_;
     // 墓碑不能按普通缓存淘汰：淘汰后可能接受迟到的旧入场请求。
     std::map<std::string, std::int64_t> removed_epochs_;
     std::uint64_t tick_ = 0;
@@ -105,6 +115,7 @@ private:
     std::map<std::string, Wall> walls_;
     std::uint64_t next_object_id_ = 0;
     std::string world_epoch_;
+    std::uint64_t next_elemental_id_ = 0;
     Json combat_config_;
     std::map<std::string, Json> config_history_;
     std::uint64_t config_generation_ = 1, config_applied_tick_ = 0;
@@ -129,6 +140,8 @@ private:
     std::pair<double, double> wall_move(double x, double y, double nx, double ny, double radius) const;
     bool valid_object_owner(const std::string& id, std::int64_t owner, std::int64_t session) const;
     void clear_abilities(const std::string& owner);
+    void initialize_elemental(Entity& entity);
+    Json cast_elemental(Entity& entity, const Json& request);
     void damage_npc(Entity& entity, Npc& npc, const std::string& skill, int amount, Json& hits);
     void damage_player(Npc& npc, Entity& entity);
     void reset_npc(Npc& npc);

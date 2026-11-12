@@ -135,6 +135,16 @@ if args.webgl:
     combat_gate['environment'].update(GATEWAY_PROFILE='abilities', GATEWAY_LOGIN_SCENE='scene-combat')
     combat_gate['ports'] = [{'target': 7000, 'published': str(ports['combat']), 'host_ip': '127.0.0.1', 'protocol': 'tcp'}]
     config['services']['gateway-combat'] = combat_gate
+    ports['elemental'] = free_port()
+    elemental_scene = copy.deepcopy(web_scene)
+    elemental_scene['environment'].update(SCENE_ID='scene-elemental-world', SCENE_PORT='9005', SCENE_MODE='elemental', ELEMENTAL_ARENA_ID='scene-elemental-arena', TICK_HZ='20')
+    config['services']['scene-elemental'] = elemental_scene
+    backend['environment']['SCENES'] += ',scene-elemental-world=http://scene-elemental:9005,scene-elemental-arena=http://scene-elemental:9005'
+    backend['depends_on']['scene-elemental'] = {'condition': 'service_healthy'}
+    elemental_gate = copy.deepcopy(web_gate)
+    elemental_gate['environment'].update(GATEWAY_PROFILE='elemental', GATEWAY_LOGIN_SCENE='scene-elemental-world', GATEWAY_ARENA_SCENE='scene-elemental-arena')
+    elemental_gate['ports'] = [{'target': 7000, 'published': str(ports['elemental']), 'host_ip': '127.0.0.1', 'protocol': 'tcp'}]
+    config['services']['gateway-elemental'] = elemental_gate
 cfg = work / 'compose.json'
 cfg.write_text(json.dumps(config, indent=2), encoding='utf-8')
 compose = ['docker', 'compose', '-f', str(cfg), '-p', project]
@@ -206,6 +216,11 @@ try:
         (work / 'ability.log').write_text(combat_check.stdout + combat_check.stderr, encoding='utf-8')
         if combat_check.returncode: raise AssertionError(combat_check.stdout + combat_check.stderr)
         passed('WebSocket projectile PvP, wall collision, cooldown, retries and reconnect in isolated combat world')
+        child_env['MMO_TEST_ELEMENTAL_GATEWAY'] = '127.0.0.1:' + str(ports['elemental'])
+        elemental_check = run(['go', 'test', './internal/wsbridge', '-run', '^TestElementalWorldIntegration$', '-count=1', '-v', '-timeout', '90s'], timeout=100)
+        (work / 'elemental.log').write_text(elemental_check.stdout + elemental_check.stderr, encoding='utf-8')
+        if elemental_check.returncode: raise AssertionError(elemental_check.stdout + elemental_check.stderr)
+        passed('WebSocket elemental arenas, real owner epochs, stable session, reactions, end-state and return position')
     if args.external_auth:
         compose_ok('stop', 'auth')
         new_peer().request('login', ok=False, token=auth['token'])
