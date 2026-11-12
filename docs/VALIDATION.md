@@ -5,6 +5,30 @@
 
 
 
+## 2026-11-12：移动状态漏推送修复与公网延迟验收
+
+Gateway 源码 `27d3b89507b0b255409b574f8597743bd3688bc0`，镜像 `latency-20261112-v1`。[Linux 发布运行 43197058722](https://github.com/dravenlove/mmo-server/actions/runs/43197058722) 全部成功，包含 Go/race/vet、8 项 CTest、原生与 Docker 验证、MySQL 恢复、独立鉴权、三套 WebSocket 协议与匿名镜像下载。新增真实连接回归用可控定时事件验证一纳秒提前或延迟不会跳过状态，并验证同步频率配置和非法值拒绝。
+
+旧代码用上一份 Ticker 时间加 200ms 判断下一次状态是否到期，会因时间戳微小偏差跳过整次推送。修复为每个定时事件下发一份最新状态；`movement` 默认 20Hz，其余 Profile 保持 5Hz，故障退避保留。游戏 Compose 增加独立 Gateway 镜像标签，配置与回退步骤见 [MOVEMENT_LATENCY.md](MOVEMENT_LATENCY.md)。
+
+已仅更新四个 Gateway。Backend、五个 C++ Scene 共六个容器的 ID 保持不变，继续运行 `elemental-20261112-v1`；Native bridge 二进制与 Caddy 未更新，独立 Auth 仍健康且没有重启。切换时短暂停止三个 WSS bridge 和四个旧 Gateway，完成最终 checkpoint，再启动新 Gateway 和原 bridge。重新开放入口前，9 个角色、8 份战斗快照逐项一致；验收后再次确认原账号、名字、凭据哈希与余额保留，两个受控账号的六键冷却仍在，没有新建账号或未完成迁移。10 个游戏服务健康；私有回退配置和数据核对材料为 `backups/latency-20261112-v1/`。
+
+Windows 客户机、可信 IP TLS、实际 Unity iframe Origin 的公网结果：
+
+| 指标 | 更新前 | 更新后 |
+| --- | --- | --- |
+| 自动状态频率 | 22 帧约 3.59Hz | 81 帧约 20.00Hz |
+| 状态间隔中位 / 最大 | 200.41 / 401.46ms | 49.97 / 52.58ms |
+| 移动输入到首份坐标变化状态中位 | 192.08ms | 115.34ms |
+| 移动输入到首份坐标变化状态最大 | 452.04ms | 140.40ms |
+| 同轮移动回执中位 | 65.88ms | 66.10ms |
+
+移动对比各为八次受控方向输入，消费自动 `state`，没有用主动 `view` 请求催出状态。另以两个账号同时连接测试，输入到首份变化状态中位 99.53ms、最大 137.84ms；另一账号接收的 51 份状态间隔中位 50.18ms、最大 60.81ms。回执快慢和首份变化状态分开统计，不把回执当作坐标已应用的确认。
+
+原 `/ws` 的 10 项 AOI、四输入在途、停止、输入失效、会话隔离回归通过。`/combat/ws` 和 `/elemental/ws` 继续声明原协议，状态间隔中位分别约 200.07ms、200.22ms；三条 HTTPS 健康检查通过。主动查询另有边界：回归脚本频繁发送 `view` 时，回执中位 146ms、最大 447ms；该同步查询与自动推送共用会话循环，本次没有优化此路径。客户端应正常消费 `state`，避免额外高频轮询。
+
+证据为 `output/latency-state-ws-before-20261112.json`、`output/latency-state-ws-after-20261112.json`、`output/latency-input-before-20261112.json`、`output/latency-input-after-20261112.json`、`output/latency-input-after-two-clients-20261112.json`、`output/latency-two-client-state-20261112.json`、`output/unity-iframe-business-report.json` 及服务器私有 `deployment.json` / `final-audit.json`。这些是短时协议采样，未包含浏览器输入节流、渲染或位置平滑，不是大规模并发、浏览器按键到首帧指标。没有修改 Unity 项目或启动 Unity 云构建。
+
 ## 2026-11-12：元素试炼场发布与公网验收
 
 源码 `12ed3a8aaf44bd93093bd014b036327bc9f343de`，镜像 `elemental-20261112-v1`。[Linux 发行运行 43181861421](https://github.com/dravenlove/mmo-server/actions/runs/43181861421)全部成功，覆盖 Go/race/vet、8 项 CTest、原生元素 WebSocket 与三个迁移故障恢复场景、SQLite/MySQL 容器持久化和重启恢复、独立鉴权，以及移动/弹道/元素三套协议和四镜像匿名拉取。
