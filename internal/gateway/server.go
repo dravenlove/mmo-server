@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,6 +92,7 @@ type Config struct {
 	Listen, HealthListen, BackendURL, Token, CertFile, KeyFile string
 	Profile, LoginScene, ArenaScene                            string
 	TraceMovement                                              bool
+	StateHz                                                    int
 }
 type Server struct {
 	cfg         Config
@@ -114,7 +116,15 @@ func env(key, fallback string) string {
 	return fallback
 }
 func FromEnv() (*Server, error) {
-	return New(Config{Listen: env("GATEWAY_LISTEN", "127.0.0.1:7000"), HealthListen: env("GATEWAY_HEALTH_LISTEN", "127.0.0.1:8080"), BackendURL: env("BACKEND_URL", "http://127.0.0.1:8081"), Token: os.Getenv("INTERNAL_TOKEN"), CertFile: os.Getenv("TLS_CERT_FILE"), KeyFile: os.Getenv("TLS_KEY_FILE"), Profile: env("GATEWAY_PROFILE", "full"), LoginScene: os.Getenv("GATEWAY_LOGIN_SCENE"), ArenaScene: os.Getenv("GATEWAY_ARENA_SCENE"), TraceMovement: os.Getenv("TRACE_MOVEMENT") == "true"})
+	stateHz := 0
+	if raw := os.Getenv("GATEWAY_STATE_HZ"); raw != "" {
+		var err error
+		stateHz, err = strconv.Atoi(raw)
+		if err != nil || stateHz < 1 || stateHz > 20 {
+			return nil, errors.New("GATEWAY_STATE_HZ 必须为 1 到 20 的整数")
+		}
+	}
+	return New(Config{Listen: env("GATEWAY_LISTEN", "127.0.0.1:7000"), HealthListen: env("GATEWAY_HEALTH_LISTEN", "127.0.0.1:8080"), BackendURL: env("BACKEND_URL", "http://127.0.0.1:8081"), Token: os.Getenv("INTERNAL_TOKEN"), CertFile: os.Getenv("TLS_CERT_FILE"), KeyFile: os.Getenv("TLS_KEY_FILE"), Profile: env("GATEWAY_PROFILE", "full"), LoginScene: os.Getenv("GATEWAY_LOGIN_SCENE"), ArenaScene: os.Getenv("GATEWAY_ARENA_SCENE"), TraceMovement: os.Getenv("TRACE_MOVEMENT") == "true", StateHz: stateHz})
 }
 func New(c Config) (*Server, error) {
 	if c.Profile == "" {
@@ -122,6 +132,15 @@ func New(c Config) (*Server, error) {
 	}
 	if c.Profile != "full" && c.Profile != "movement" && c.Profile != "abilities" && c.Profile != "elemental" {
 		return nil, errors.New("GATEWAY_PROFILE 必须为 full、movement、abilities 或 elemental")
+	}
+	if c.StateHz == 0 {
+		c.StateHz = 5
+		if c.Profile == "movement" {
+			c.StateHz = 20
+		}
+	}
+	if c.StateHz < 1 || c.StateHz > 20 {
+		return nil, errors.New("GATEWAY_STATE_HZ 必须为 1 到 20 的整数")
 	}
 	if c.Profile == "elemental" && (c.LoginScene == "" || c.ArenaScene == "" || len(c.ArenaScene) > 64 || c.ArenaScene == c.LoginScene) {
 		return nil, errors.New("elemental profile requires distinct login and arena scenes")
@@ -163,7 +182,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "service": "gateway", "connections": s.active.Load(), "profile": s.cfg.Profile})
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "service": "gateway", "connections": s.active.Load(), "profile": s.cfg.Profile, "state_hz": s.cfg.StateHz})
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		c, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -352,6 +371,12 @@ func (s *Server) checkpoint(ctx context.Context, r Route, v *View) {
 }
 
 func (s *Server) serveConn(ctx context.Context, c net.Conn) {
+	ticker := time.NewTicker(time.Second / time.Duration(s.cfg.StateHz))
+	defer ticker.Stop()
+	s.serveConnWithTicks(ctx, c, ticker.C)
+}
+
+func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-chan time.Time) {
 	defer c.Close()
 	// 浏览器断开只取消场景 I/O；已发出的数据库事务继续完成，避免取消 MySQL 固定会话。
 	serviceCtx := ctx
@@ -516,11 +541,11 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 			s.checkpoint(context.Background(), *route, lastView)
 		}
 	}()
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
+	// 每个定时事件只发送一份最新状态，不再用上一帧时间加周期重复筛选。
+	// Ticker 的相邻时间戳有纳秒级偏差；重复比较 now+interval 会漏掉整次推送。
 	nextSession := time.Now()
 	nextSave := time.Now().Add(2 * time.Second)
-	nextView := time.Now()
+	viewRetryAt := time.Time{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -621,7 +646,7 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 							lastView = nil
 							publish(route)
 							resp.Data = map[string]any{"accepted": true, "reason": ""}
-							nextView = time.Now()
+							viewRetryAt = time.Time{}
 						} else {
 							resp.Data = out
 						}
@@ -723,7 +748,8 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 			if !write(resp) {
 				return
 			}
-		case now := <-ticker.C:
+		case <-ticks:
+			now := time.Now()
 			if route == nil {
 				continue
 			}
@@ -750,16 +776,16 @@ func (s *Server) serveConn(ctx context.Context, c net.Conn) {
 				route = &current
 				publish(route)
 			}
-			if !now.Before(nextView) {
+			if !now.Before(viewRetryAt) {
 				var v View
 				err := s.sceneCall(ctx, *route, "/v1/view", ref(route.Role), &v)
 				if err != nil {
-					nextView = now.Add(time.Second)
+					viewRetryAt = time.Now().Add(time.Second)
 					if !write(Response{Op: "state", Error: err.Error()}) {
 						return
 					}
 				} else {
-					nextView = now.Add(200 * time.Millisecond)
+					viewRetryAt = time.Time{}
 					overlayBalance(&v, route.Role)
 					lastView = &v
 					if !write(Response{Op: "state", OK: true, Data: s.clientView(v)}) {

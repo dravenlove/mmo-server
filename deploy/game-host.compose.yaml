@@ -112,7 +112,7 @@ services:
 
   gateway:
     <<: *runtime
-    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_IMAGE_TAG:-dev}
+    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_GATEWAY_IMAGE_TAG:-${MMO_IMAGE_TAG:-dev}}
     build:
       context: ..
       dockerfile: Dockerfile.golang
@@ -159,13 +159,14 @@ services:
 
   gateway-webgl:
     <<: *runtime
-    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_IMAGE_TAG:-dev}
+    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_GATEWAY_IMAGE_TAG:-${MMO_IMAGE_TAG:-dev}}
     environment:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set the shared random INTERNAL_TOKEN}
       BACKEND_URL: http://backend:8081
       GATEWAY_LISTEN: 0.0.0.0:7000
       GATEWAY_HEALTH_LISTEN: 0.0.0.0:8080
       GATEWAY_PROFILE: movement
+      GATEWAY_STATE_HZ: ${WEBGL_STATE_HZ:-20}
       GATEWAY_LOGIN_SCENE: scene-webgl
       TRACE_MOVEMENT: ${WEBGL_TRACE_MOVEMENT:-true}
     ports:
@@ -213,7 +214,7 @@ services:
 
   gateway-elemental:
     <<: *runtime
-    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_IMAGE_TAG:-dev}
+    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_GATEWAY_IMAGE_TAG:-${MMO_IMAGE_TAG:-dev}}
     environment:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set the shared random INTERNAL_TOKEN}
       BACKEND_URL: http://backend:8081
@@ -237,7 +238,7 @@ services:
 
   gateway-combat:
     <<: *runtime
-    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_IMAGE_TAG:-dev}
+    image: ${MMO_IMAGE_PREFIX:-mmo}/gateway:${MMO_GATEWAY_IMAGE_TAG:-${MMO_IMAGE_TAG:-dev}}
     environment:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set the shared random INTERNAL_TOKEN}
       BACKEND_URL: http://backend:8081
