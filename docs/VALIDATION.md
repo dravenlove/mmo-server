@@ -5,6 +5,16 @@
 
 
 
+## 2026-11-12：Unity 预览 Origin 与断线诊断
+
+用户从实际 WS 请求头确认来源为 `https://developer.unity3dusercontent.com`，与地址栏的 `https://cloud.unity.com` 不同。修改前，Windows 对该实际来源的公网 WSS 握手明确返回 403；精确增加来源后返回 101，并收到 `webgl-movement-v1` ping 回执。原 IP、原域名与 Unity Dashboard 三个来源继续通过，未授权来源仍返回 403。
+
+Native 转接程序源码 `7adafb5` 增加不含消息、凭据、查询串或客户端关闭说明的连接阶段日志；不符合协议的文本返回 1007，二进制返回 1003，超限返回 1009，Gateway 断开返回 1011。本机 `go test ./...`、`go vet ./...` 通过；新增日志脱敏与关闭码回归，交叉编译的 Linux amd64 转接测试在实际游戏主机连续 5 轮通过。备份旧程序、build.json 和环境后，仅替换 Native 转接程序并更新 Origin；六个游戏容器 ID、启动时间、重启次数与健康状态保持一致。回退材料保存在私有 `backups/ws-diagnostics-20261112-031253/`。
+
+Windows 使用实际预览 Origin、受信任 IP TLS 入口和两个既有受控测试角色完成 10 项协议检查，包括登录、双角色 AOI、4 条移动在途、停止与失联、AOI 离开/返回、新旧会话隔离、断线隐藏和未登录拒绝。59 次移动回执中位约 49.82ms、最大约 97.1ms；110 次视图中位约 54.36ms、最大约 104.9ms。没有创建账号或读取用户客户端凭据。多来源初次复测中的一次握手等待达到 6 秒，未在转接日志中出现对应连接；随后所有来源复测通过，不能据此保证客户端网络无偶发问题。报告为 `output/unity-iframe-origin-check.json` 和 `output/unity-iframe-business-report.json`。
+
+这些是 Windows 协议探针结果；未修改 Unity 客户端或触发云构建，实际 Unity 浏览器的 1006 是否消失仍待用户刷新验证。
+
 ## 2026-11-12：IP WSS 与 Windows 公网验收
 
 用户选择先按 IP 联调。游戏主机新增 Caddy IP 站点，显式使用 Let's Encrypt `shortlived` ACME 签发，并配置 NAT 下无 SNI 连接的公网默认名称；WebSocket 允许列表增加该 IP 的精确 HTTPS Origin。游戏程序和镜像保持 `801b88f` / `webgl-20261111-v1`，没有重建游戏容器或修改数据库配置。原域名、原战斗入口和账号存档保留。
