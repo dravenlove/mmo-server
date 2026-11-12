@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -28,6 +30,7 @@ type Config struct {
 	UpstreamTLS    bool
 	AllowedOrigins []string
 	MaxConnections int
+	Logger         *log.Logger
 }
 
 type Server struct {
@@ -37,6 +40,7 @@ type Server struct {
 	closed  bool
 	clients map[*websocket.Conn]net.Conn
 	origins map[string]bool
+	nextID  atomic.Uint64
 }
 
 func New(cfg Config) (*Server, error) {
@@ -45,6 +49,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.MaxConnections <= 0 {
 		cfg.MaxConnections = 128
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = log.Default()
 	}
 	s := &Server{cfg: cfg, clients: make(map[*websocket.Conn]net.Conn), origins: make(map[string]bool)}
 	for _, origin := range cfg.AllowedOrigins {
@@ -72,16 +79,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Requiring an allowed Origin also makes browser/account boundary mistakes visible.
 	if !s.origins[r.Header.Get("Origin")] {
+		s.reject(r, http.StatusForbidden, "origin_not_allowed")
 		http.Error(w, "origin is not allowed", http.StatusForbidden)
 		return
 	}
 	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+		s.reject(r, http.StatusBadRequest, "query_not_supported")
 		http.Error(w, "query parameters are not supported", http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
 	if s.closed || s.active >= s.cfg.MaxConnections {
 		s.mu.Unlock()
+		s.reject(r, http.StatusServiceUnavailable, "bridge_unavailable")
 		http.Error(w, "bridge unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -101,11 +111,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		upstream, err = dialer.DialContext(ctx, "tcp", s.cfg.Upstream)
 	}
 	if err != nil {
+		s.reject(r, http.StatusBadGateway, "gateway_unavailable")
 		http.Error(w, "gateway unavailable", http.StatusBadGateway)
 		return
 	}
 	defer upstream.Close()
-	upgrade := websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(req *http.Request) bool { return s.origins[req.Header.Get("Origin")] }}
+	upgrade := websocket.Upgrader{
+		HandshakeTimeout: 5 * time.Second,
+		CheckOrigin:      func(req *http.Request) bool { return s.origins[req.Header.Get("Origin")] },
+		Error: func(w http.ResponseWriter, req *http.Request, status int, _ error) {
+			s.reject(req, status, "invalid_upgrade")
+			http.Error(w, http.StatusText(status), status)
+		},
+	}
 	ws, err := upgrade.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -119,6 +137,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.clients[ws] = upstream
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.clients, ws); s.mu.Unlock() }()
+	id, started := s.nextID.Add(1), time.Now()
+	s.cfg.Logger.Printf("wsbridge event=connected connection=%d origin=%q", id, diagnosticOrigin(r.Header.Get("Origin")))
+	// 只记录阶段、固定原因和关闭码；不记录消息、凭据、查询串或客户端关闭说明。
+	var finished sync.Once
+	finish := func(reason string, code, peerCode int) {
+		finished.Do(func() {
+			s.cfg.Logger.Printf("wsbridge event=closed connection=%d reason=%s close_code=%d peer_code=%d duration_ms=%d", id, reason, code, peerCode, time.Since(started).Milliseconds())
+			if code != 0 {
+				ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
+			}
+			ws.Close()
+			upstream.Close()
+		})
+	}
+	defer finish("handler_returned", websocket.CloseInternalServerErr, 0)
 	ws.SetReadLimit(MaxFrame - 1)
 	ws.SetReadDeadline(time.Now().Add(60 * time.Second))
 	ws.SetPongHandler(func(string) error { return ws.SetReadDeadline(time.Now().Add(60 * time.Second)) })
@@ -131,8 +164,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-ticker.C:
 				if ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(3*time.Second)) != nil {
-					ws.Close()
-					upstream.Close()
+					finish("ping_failed", 0, 0)
 					return
 				}
 			case <-done:
@@ -142,44 +174,82 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	// One TCP reader and one WebSocket data writer. Ping uses the concurrency-safe control API.
 	go func() {
-		defer ws.Close()
-		defer upstream.Close()
 		scanner := bufio.NewScanner(upstream)
 		scanner.Buffer(make([]byte, 4096), MaxFrame)
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			if len(line) > MaxFrame-1 || !utf8.Valid(line) || len(line) == 0 || line[0] != '{' || !json.Valid(line) {
+				finish("gateway_invalid_json", websocket.CloseInternalServerErr, 0)
 				return
 			}
 			ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if ws.WriteMessage(websocket.TextMessage, line) != nil {
+				finish("client_write_failed", 0, 0)
 				return
 			}
+		}
+		if scanner.Err() != nil {
+			finish("gateway_read_failed", websocket.CloseInternalServerErr, 0)
+		} else {
+			finish("gateway_closed", websocket.CloseInternalServerErr, 0)
 		}
 	}()
 	for {
 		kind, message, readErr := ws.ReadMessage()
 		if readErr != nil {
+			reason, code, peerCode := "client_transport_closed", 0, 0
+			var closeErr *websocket.CloseError
+			var netErr net.Error
+			if errors.As(readErr, &closeErr) {
+				peerCode = closeErr.Code
+				if peerCode != websocket.CloseAbnormalClosure {
+					reason = "peer_closed"
+				}
+			} else if errors.Is(readErr, websocket.ErrReadLimit) {
+				reason, code = "message_too_large", websocket.CloseMessageTooBig
+			} else if errors.As(readErr, &netErr) && netErr.Timeout() {
+				reason, code = "client_read_timeout", websocket.CloseGoingAway
+			}
+			finish(reason, code, peerCode)
 			return
 		}
 		if kind != websocket.TextMessage {
-			ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, "text JSON required"), time.Now().Add(time.Second))
+			finish("text_json_required", websocket.CloseUnsupportedData, 0)
 			return
 		}
 		message = bytes.TrimSpace(message)
 		if len(message) == 0 || !utf8.Valid(message) || message[0] != '{' || !json.Valid(message) {
+			finish("invalid_text_json", websocket.CloseInvalidFramePayloadData, 0)
 			return
 		}
 		var compact bytes.Buffer
 		if json.Compact(&compact, message) != nil || compact.Len()+1 > MaxFrame {
+			finish("message_too_large", websocket.CloseMessageTooBig, 0)
 			return
 		}
 		compact.WriteByte('\n')
 		upstream.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		if _, err = io.Copy(upstream, &compact); err != nil {
+			finish("gateway_write_failed", websocket.CloseInternalServerErr, 0)
 			return
 		}
 	}
+}
+
+func (s *Server) reject(r *http.Request, status int, reason string) {
+	s.cfg.Logger.Printf("wsbridge event=handshake_rejected reason=%s status=%d origin=%q", reason, status, diagnosticOrigin(r.Header.Get("Origin")))
+}
+
+// 非法 Origin 可能夹带凭据或查询参数，日志只保留合法的来源三元组。
+func diagnosticOrigin(origin string) string {
+	if origin == "" {
+		return "(missing)"
+	}
+	u, err := url.Parse(origin)
+	if len(origin) > 256 || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "(invalid)"
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // HTTP Shutdown alone does not close hijacked WebSocket connections.

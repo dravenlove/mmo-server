@@ -14,9 +14,31 @@
 
 客户端仍使用连接后的 `register` / `login`，已有凭据可继续登录；接口、场景、方向、AOI、序号和代次语义见 [完整交接协议](WEBGL_MOVEMENT_HANDOFF.md)。本轮只更改入口和访问许可，没有修改 Unity 客户端代码、数据库地址、角色存档或战斗场景。
 
-Origin 是**实际运行游戏的网页**的协议、主机和端口，不能填写 WSS URL。当前增加 IP 站点的 HTTPS Origin，并保留原来已授权的域名 Origin。2026-11-12 已按用户提供的 Origin 加入 `https://cloud.unity.com`，并通过 WSS 握手与 ping 验证。其他本地调试端口或网页地址须分别加入精确允许列表；若 Unity 预览游戏位于其他来源的 iframe，以实际 WebSocket 请求头为准。HTTPS 页面可直接连接受信任的 IP WSS。
+Origin 是**实际运行游戏的网页**的协议、主机和端口，不能填写 WSS URL。当前增加 IP 站点的 HTTPS Origin，并保留原来已授权的域名 Origin。2026-11-12 按用户提供的地址栏来源加入 `https://cloud.unity.com`；随后用户从实际 WS 请求头确认游戏 iframe 来源为 `https://developer.unity3dusercontent.com`，故补充该精确 Origin。其他本地调试端口或网页地址须分别加入精确允许列表；Unity 预览以实际 WebSocket 请求头为准。HTTPS 页面可直接连接受信任的 IP WSS。
 
 目前 IP 网站根目录仍是等待上传 Unity 构建产物的状态页；它根据当前网页地址显示 WSS，不代表 Unity 游戏已经发布。健康检查只表示转接进程响应，业务连通以角色验收为准。
+
+## 浏览器报 1006 时
+
+1006 表示浏览器未收到正常关闭帧，不能单凭它判断是 Origin、TLS、网络还是连接后的协议错误。先在 F12 → Network → WS 查看实际 Request URL、Status Code，以及展开请求标头后的 Origin；再看 Console 完整报错。不要发送玩家 token、Cookie 或消息内容。
+
+游戏主机上的转接进程现在记录连接阶段和固定原因，可查看：
+
+```bash
+sudo journalctl -u mmo-websocket.service --since '5 minutes ago' --no-pager
+```
+
+| 日志 | 含义 |
+| --- | --- |
+| `handshake_rejected`、`origin_not_allowed`、403 | 实际 Origin 未在精确列表中；iframe 来源可能与地址栏不同 |
+| `handshake_rejected`、`gateway_unavailable`、502 | 转接进程不能连接本机 movement Gateway |
+| `connected` | 已升级为 WebSocket，不代表角色登录已成功 |
+| `invalid_text_json`、1007 | 收到了不符合单条 JSON 对象要求的文本 |
+| `text_json_required`、1003 | 收到了二进制消息，当前协议只接受文本 |
+| `gateway_closed` / `gateway_read_failed` / `gateway_write_failed`、1011 | 本机 Gateway 链路断开，继续检查其容器日志 |
+| `client_transport_closed`、`peer_code=1006` | 对端未发送关闭帧；结合浏览器 Console 判断 |
+
+每条成功连接的日志以 `connection` 编号关联，关闭记录含持续毫秒数。`close_code=0` 表示本次诊断路径没有额外发送关闭帧（对端正常关闭时库会自动应答）；不将它作为浏览器的关闭码。日志只包含经过校验的 Origin、固定原因与关闭码，不记录消息、查询串、认证头或客户端关闭说明。没有 `connected` / 拒绝日志并不能证明客户端没有尝试；请求可能在到达转接进程前被 TLS、代理或浏览器安全策略阻止。
 
 ## TLS 与自动续期
 

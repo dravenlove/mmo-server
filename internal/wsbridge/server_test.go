@@ -2,11 +2,14 @@ package wsbridge
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,17 +95,18 @@ func TestOriginAndQueryRejection(t *testing.T) {
 func TestBinaryAndOversizedMessagesClose(t *testing.T) {
 	_, endpoint := testBridge(t)
 	for _, test := range []struct {
-		kind    int
-		payload []byte
-	}{{websocket.BinaryMessage, []byte("hello")}, {websocket.TextMessage, []byte(strings.Repeat("x", MaxFrame))}} {
+		kind      int
+		payload   []byte
+		closeCode int
+	}{{websocket.BinaryMessage, []byte("hello"), websocket.CloseUnsupportedData}, {websocket.TextMessage, []byte(strings.Repeat("x", MaxFrame)), websocket.CloseMessageTooBig}} {
 		conn, _, err := websocket.DefaultDialer.Dial(endpoint, http.Header{"Origin": {"https://gate.draven.world"}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		conn.WriteMessage(test.kind, test.payload)
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		if _, _, err = conn.ReadMessage(); err == nil {
-			t.Fatal("invalid frame was forwarded")
+		if _, _, err = conn.ReadMessage(); !websocket.IsCloseError(err, test.closeCode) {
+			t.Fatalf("expected close code %d, got %v", test.closeCode, err)
 		}
 		conn.Close()
 	}
@@ -148,5 +152,123 @@ func TestExactUTF8FrameBoundary(t *testing.T) {
 	kind, reply, err := conn.ReadMessage()
 	if err != nil || kind != websocket.TextMessage || len(reply) != len(body) {
 		t.Fatalf("65535-byte JSON did not round-trip: %v bytes=%d", err, len(reply))
+	}
+}
+
+type diagnosticBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *diagnosticBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *diagnosticBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+func TestDiagnosticsExcludeCredentials(t *testing.T) {
+	var output diagnosticBuffer
+	s, err := New(Config{Upstream: echoGateway(t), AllowedOrigins: []string{"https://game.example"}, Logger: log.New(&output, "", 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := httptest.NewServer(s)
+	t.Cleanup(func() { s.Close(); h.Close() })
+	endpoint := "ws" + strings.TrimPrefix(h.URL, "http") + "/ws"
+	for _, candidate := range []struct{ origin, suffix string }{
+		{"https://unexpected.example", ""},
+		{"https://user:origin-secret@unexpected.example", ""},
+		{"https://unexpected.example/?token=origin-secret", ""},
+		{"https://game.example", "?token=query-secret"},
+	} {
+		conn, response, err := websocket.DefaultDialer.Dial(endpoint+candidate.suffix, http.Header{"Origin": {candidate.origin}, "Cookie": {"token=cookie-secret"}, "Authorization": {"Bearer header-secret"}})
+		if conn != nil {
+			conn.Close()
+		}
+		if response != nil {
+			response.Body.Close()
+		}
+		if err == nil {
+			t.Fatal("unsafe handshake accepted")
+		}
+	}
+	conn, _, err := websocket.DefaultDialer.Dial(endpoint, http.Header{"Origin": {"https://game.example"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"token":"payload-secret"}`)); err != nil {
+		t.Fatal(err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := conn.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "close-secret"), time.Now().Add(time.Second))
+	conn.ReadMessage()
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(output.String(), "event=closed") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	result := output.String()
+	for _, want := range []string{"reason=origin_not_allowed status=403", "origin=\"https://unexpected.example\"", "origin=\"(invalid)\"", "reason=query_not_supported status=400", "event=connected", "reason=peer_closed", "peer_code=1000"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing diagnostic %q: %s", want, result)
+		}
+	}
+	if strings.Contains(result, "secret") || strings.Contains(result, "token=") {
+		t.Fatalf("credentials leaked in diagnostic: %s", result)
+	}
+}
+
+func TestInvalidTextHasExplicitCloseCode(t *testing.T) {
+	_, endpoint := testBridge(t)
+	conn, _, err := websocket.DefaultDialer.Dial(endpoint, http.Header{"Origin": {"https://gate.draven.world"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.WriteMessage(websocket.TextMessage, []byte(`{"token":"do-not-log"`))
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = conn.ReadMessage()
+	if !websocket.IsCloseError(err, websocket.CloseInvalidFramePayloadData) {
+		t.Fatalf("expected explicit 1007, got %v", err)
+	}
+}
+
+func TestGatewayEOFHasExplicitCloseCode(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			conn.Close()
+		}
+	}()
+	s, err := New(Config{Upstream: listener.Addr().String(), AllowedOrigins: []string{"https://game.example"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := httptest.NewServer(s)
+	defer h.Close()
+	defer s.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(h.URL, "http")+"/ws", http.Header{"Origin": {"https://game.example"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = conn.ReadMessage()
+	if !websocket.IsCloseError(err, websocket.CloseInternalServerErr) {
+		t.Fatalf("expected explicit 1011 on gateway EOF, got %v", err)
 	}
 }
