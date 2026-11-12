@@ -1,0 +1,20 @@
+# 在 caddy 服务环境中设置 MMO_PUBLIC_IP 为真实公网 IPv4。
+# 主 Caddyfile 的首个全局块中另加 default_sni {$MMO_PUBLIC_IP}，用于 NAT 后的无 SNI 连接。
+https://{$MMO_PUBLIC_IP} {
+    tls {
+        issuer acme https://acme-v02.api.letsencrypt.org/directory {
+            profile shortlived
+            disable_tlsalpn_challenge
+        }
+    }
+    handle /ws {
+        reverse_proxy 127.0.0.1:7001
+    }
+    handle /healthz {
+        reverse_proxy 127.0.0.1:7001
+    }
+    handle {
+        root * /srv/axiomancy
+        file_server
+    }
+}

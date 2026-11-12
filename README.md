@@ -2,7 +2,7 @@
 
 一个可分别部署的服务端原型：Go 网关承接玩家长连接，Go Auth 管理账号，Game Backend 管理角色、场景归属和持久化，两个独立 C++ SceneHost 推进实时移动和 AOI。Linux Docker 是部署目标；同机 Compose 用于演示，多机模板位于 `deploy/`。
 
-Unity WebGL 的移动与 AOI 接入见 [服务端交接协议](docs/WEBGL_MOVEMENT_HANDOFF.md)，提供独立无战斗场景和 WSS 入口。原桌面战斗入口继续保留。
+Unity WebGL 的移动与 AOI 接入见 [服务端交接协议](docs/WEBGL_MOVEMENT_HANDOFF.md)，提供独立无战斗场景和 WSS 入口；当前使用 [IP 地址联调](docs/IP_WSS_DEBUG.md)，保留 TLS 证书校验。原桌面战斗入口继续保留。
 
 公开仓库：[dravenlove/mmo-server](https://github.com/dravenlove/mmo-server)。
 

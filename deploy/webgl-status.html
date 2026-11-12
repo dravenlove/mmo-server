@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>万象法则 · 联网入口</title>
+<style>body{max-width:760px;margin:12vh auto;padding:24px;background:#101d26;color:#dfe9ef;font:18px/1.8 sans-serif}a{color:#65d8c1}code{color:#ffc67b}</style>
+<h1>万象法则 · 联网入口</h1>
+<p>WebSocket 接入地址：<code id="gateway">正在读取当前入口…</code></p>
+<p><a href="/healthz">检查接入服务</a></p>
+<p>Unity WebGL 客户端产物尚未上传。完成客户端构建后，将完整产物发布到本站点，再进行浏览器操作联调。</p>
+<script>document.getElementById('gateway').textContent='wss://'+location.host+'/ws';</script>
+</html>

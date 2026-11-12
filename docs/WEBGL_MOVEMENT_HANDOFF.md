@@ -1,16 +1,16 @@
 # 《万象法则》服务端交接：移动与 AOI
 
-协议：`webgl-movement-v1` · 2026-11-11（Asia/Shanghai）。对应客户端需求：AXIOMANCY `1bcd265`。本次只实现服务端，不修改或构建 Unity 客户端。
+协议：`webgl-movement-v1` · 更新 2026-11-12（Asia/Shanghai）。对应客户端需求：AXIOMANCY `1bcd265`。本次只实现服务端，不修改或构建 Unity 客户端。
 
-**状态：服务端实现与部署已完成；普通公网联调待腾讯云备案放行。** 实际程序源码 `801b88f`，镜像 `webgl-20261111-v1`。2026-11-11 从 Windows 公网测试时，HTTP GET 被重定向到腾讯云备案拦截页，TLS 被重置；用户确认域名尚未备案。另一台云主机通过公网地址完成 WSS 双角色业务验收，不代表普通公网已经放行。腾讯云对未备案/未接入域名的阻断说明见 [官方文档](https://cloud.tencent.com/document/api/243/18907)。
+**状态：IP WSS 已部署，并完成 Windows 客户机公网协议验收。** 游戏程序仍为 `801b88f`、镜像 `webgl-20261111-v1`。2026-11-12 增加公网 IP 的受信任 TLS 入口，保留原账号、场景和协议；接入和自动续期说明见 [IP 联调文档](IP_WSS_DEBUG.md)。原域名仍受其未备案状态影响，IP 联调不表示原域名已经放行。Unity 引擎构建与浏览器实际操作仍由客户端方验收。
 
 ## 客户端接入信息
 
 | 项目 | 最终约定 |
 | --- | --- |
-| WSS | `wss://gate.draven.world/ws`，证书由 Caddy 管理 |
-| 允许的网页 Origin | `https://gate.draven.world`，精确匹配；其他游戏页面域名/端口须单独加入 |
-| 健康检查 | `https://gate.draven.world/healthz`；只证明转接进程响应，业务以双角色验收为准 |
+| WSS | `wss://<游戏主机公网IP>/ws`；使用部署人员交付的实际 IP，证书由 Caddy 管理 |
+| 允许的网页 Origin | `https://<游戏主机公网IP>`；原 `https://gate.draven.world` 也保留，精确匹配 |
+| 健康检查 | `https://<游戏主机公网IP>/healthz`；只证明转接进程响应，业务以双角色验收为准 |
 | 认证 | 连接后使用 JSON `register` / `login`；URL 不接受查询参数或凭据 |
 | 注册规则 | 去除首尾空白；1～24 个 Unicode 码点；禁止控制字符、重名；区分大小写。C# 的 24 UTF-16 单位限制可以继续保留 |
 | 身份 | token 为服务端生成的 64 位十六进制字符串；角色 ID 稳定，重连使 `session_epoch` 增加 |
@@ -24,7 +24,7 @@
 | 容量 / 消息 | 每份 players 最多 128 项，包含自己；单条完整 WebSocket UTF-8 文本消息最多 65,535 字节；场景在线名额与性能容量不同，尚未做满载压测 |
 | 帧 / 保活 | 一帧文本一个完整 JSON 对象，不接受二进制；客户端业务 ping 约 15 秒可沿用；入口另有 WebSocket Ping/Pong |
 
-目前只获得 WSS 地址，未获得 Unity Cloud 预览网页地址，故保留上述既有 Origin。WSS URL 与网页 Origin 是两个配置；若用其他页面托管客户端，先提供其实际网页 Origin。可继续将 Unity 构建产物部署到既有静态站点；本次不覆盖该站点内容。
+IP 入口已允许同一 IP 的 HTTPS 网页，Unity Cloud 预览网页地址仍未提供。WSS URL 与网页 Origin 是两个配置；若用其他页面托管客户端，先提供其实际网页 Origin。IP 根目录仍是等待构建产物的状态页，页面会按当前主机显示 WSS；当前没有发布 Unity 游戏产物。
 
 ## 协议兼容与行为差异
 
@@ -73,9 +73,9 @@ python3 scripts/smoke_docker.py --tag webgl-20261111-v1 --database mysql --exter
 
 服务端协议检查、HTTPS/WSS 入口检查、Unity 编译和真实 WebGL 操作是不同验证范围。最终现场结果记录在 [VALIDATION.md](VALIDATION.md)；客户端方收到接入完成通知后，按本文件适配并完成双角色、松键/失焦和浏览器真实操作验收。
 
-## 备案放行后的交接复核
+## 原域名恢复后的补充复核
 
-请先在 [腾讯云备案控制台](https://console.cloud.tencent.com/beian)按实际主体情况完成首次/新增备案及接入，等待平台解除拦截。随后保持原 WSS 地址，按下面顺序复核：
+当前直接按 IP 联调即可。以后恢复原域名时，在 [腾讯云备案控制台](https://console.cloud.tencent.com/beian)按实际主体情况完成首次/新增备案及接入，等待平台解除拦截。随后保持原 WSS 地址，按下面顺序复核：
 
 1. 从实际客户端网络 GET `https://gate.draven.world/healthz`，确认返回 JSON 和 `webgl-movement-v1`，而非跳转页。当前 HEAD 曾到达 Caddy，而 GET 被平台拦截，不能只用 `curl -I` 下结论。
 2. 用实际网页 Origin 建立 WSS，发送 ping、注册两个不同名字并登录，确认场景为 `scene-webgl`。

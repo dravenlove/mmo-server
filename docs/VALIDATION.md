@@ -4,6 +4,18 @@
 
 
 
+
+## 2026-11-12：IP WSS 与 Windows 公网验收
+
+用户选择先按 IP 联调。游戏主机新增 Caddy IP 站点，显式使用 Let's Encrypt `shortlived` ACME 签发，并配置 NAT 下无 SNI 连接的公网默认名称；WebSocket 允许列表增加该 IP 的精确 HTTPS Origin。游戏程序和镜像保持 `801b88f` / `webgl-20261111-v1`，没有重建游戏容器或修改数据库配置。原域名、原战斗入口和账号存档保留。
+
+- Windows 客户机通过真实公网 IP、禁用测试进程的 HTTP 代理，HTTPS 健康检查 200。TLS 1.3 证书由 Let's Encrypt 签发，SAN 为该公网 IP，系统默认链和地址校验通过；没有关闭验证或安装本地 CA。Caddy 已获取自动续期信息并保持开机启动，尚未经历完整六日续期周期。
+- 复用两个已存在的受控验收角色，没有新增账号或读取既有玩家凭据。10 项现场检查通过：错误/缺失 Origin 与查询拒绝、登录到移动场景、双角色 AOI、4 条移动在途和停止、250ms 输入失联、AOI 离开/返回、新会话 fencing、旧连接关闭不影响新连接、正常断线隐藏和未登录移动拒绝。
+- 62 次移动回执中位约 49.75ms、最大约 51.61ms；114 次视图中位约 50ms、最大约 101.18ms；三次登录中位约 285.84ms。只代表本机网络的短时协议数据，不是输入到显示首帧或容量结果。
+- IP 状态页按当前主机显示 WSS 地址，仍明确等待 Unity 构建产物；没有修改或构建 Unity 客户端，也没有宣称实际 WebGL 按键验收通过。
+
+私有配置备份位于游戏仓库 `backups/ip-wss-20261112/`；本机记录为 `output/ip-wss-public-report.json` 与 `output/ip-wss-tls-report.json`。实际 IP 在私有交付清单中，公开模板使用占位地址。当前可使用 IP 入口联调，原域名的备案拦截状态仍单独保留。操作与续期要求见 [IP_WSS_DEBUG.md](IP_WSS_DEBUG.md)。
+
 ## 2026-11-11：WebGL 移动、AOI 与公网入口限制
 
 服务端源码 `801b88f`，游戏镜像 `webgl-20261111-v1`。[GitHub Linux 发行验收](https://github.com/dravenlove/mmo-server/actions/runs/43029183920)成功，包括 Go/race/vet、6 项 CTest、配置管理工具、SQLite/MySQL 既有战斗与热更恢复回归，以及独立鉴权加 WebSocket 双角色集成；四镜像匿名拉取验证通过。本机原生进程的独立移动世界与 WebSocket 双角色检查也通过。
