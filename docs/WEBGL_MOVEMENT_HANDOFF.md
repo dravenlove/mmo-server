@@ -9,7 +9,7 @@
 | 项目 | 最终约定 |
 | --- | --- |
 | WSS | `wss://<游戏主机公网IP>/ws`；使用部署人员交付的实际 IP，证书由 Caddy 管理 |
-| 允许的网页 Origin | `https://<游戏主机公网IP>`；原 `https://gate.draven.world` 也保留，精确匹配 |
+| 允许的网页 Origin | `https://<游戏主机公网IP>`；另有 `https://gate.draven.world` 与 `https://cloud.unity.com`，精确匹配 |
 | 健康检查 | `https://<游戏主机公网IP>/healthz`；只证明转接进程响应，业务以双角色验收为准 |
 | 认证 | 连接后使用 JSON `register` / `login`；URL 不接受查询参数或凭据 |
 | 注册规则 | 去除首尾空白；1～24 个 Unicode 码点；禁止控制字符、重名；区分大小写。C# 的 24 UTF-16 单位限制可以继续保留 |
@@ -24,7 +24,7 @@
 | 容量 / 消息 | 每份 players 最多 128 项，包含自己；单条完整 WebSocket UTF-8 文本消息最多 65,535 字节；场景在线名额与性能容量不同，尚未做满载压测 |
 | 帧 / 保活 | 一帧文本一个完整 JSON 对象，不接受二进制；客户端业务 ping 约 15 秒可沿用；入口另有 WebSocket Ping/Pong |
 
-IP 入口已允许同一 IP 的 HTTPS 网页，Unity Cloud 预览网页地址仍未提供。WSS URL 与网页 Origin 是两个配置；若用其他页面托管客户端，先提供其实际网页 Origin。IP 根目录仍是等待构建产物的状态页，页面会按当前主机显示 WSS；当前没有发布 Unity 游戏产物。
+IP 入口已允许同一 IP 的 HTTPS 网页，并按用户提供的 Origin 授权 `https://cloud.unity.com`。预览游戏若来自其他来源的 iframe，须以该游戏实际 WebSocket 请求头中的 Origin 为准。WSS URL 与网页 Origin 是两个配置；若用其他页面托管客户端，先提供其实际网页 Origin。IP 根目录仍是等待构建产物的状态页，页面会按当前主机显示 WSS；当前没有发布 Unity 游戏产物。
 
 ## 协议兼容与行为差异
 

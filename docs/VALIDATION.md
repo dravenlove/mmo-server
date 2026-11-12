@@ -14,6 +14,8 @@
 - 62 次移动回执中位约 49.75ms、最大约 51.61ms；114 次视图中位约 50ms、最大约 101.18ms；三次登录中位约 285.84ms。只代表本机网络的短时协议数据，不是输入到显示首帧或容量结果。
 - IP 状态页按当前主机显示 WSS 地址，仍明确等待 Unity 构建产物；没有修改或构建 Unity 客户端，也没有宣称实际 WebGL 按键验收通过。
 
+同日按用户提供的 `https://cloud.unity.com` 增加精确 Origin，保留原 IP 和域名。Windows 对三个允许 Origin 的受信任 IP WSS 握手和 ping 均通过，未授权 Origin 仍返回 403；没有创建账号。该检查模拟请求头，不代替 Unity Cloud 内实际 iframe 的浏览器验收。
+
 私有配置备份位于游戏仓库 `backups/ip-wss-20261112/`；本机记录为 `output/ip-wss-public-report.json` 与 `output/ip-wss-tls-report.json`。实际 IP 在私有交付清单中，公开模板使用占位地址。当前可使用 IP 入口联调，原域名的备案拦截状态仍单独保留。操作与续期要求见 [IP_WSS_DEBUG.md](IP_WSS_DEBUG.md)。
 
 ## 2026-11-11：WebGL 移动、AOI 与公网入口限制

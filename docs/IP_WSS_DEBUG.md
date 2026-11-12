@@ -14,7 +14,7 @@
 
 客户端仍使用连接后的 `register` / `login`，已有凭据可继续登录；接口、场景、方向、AOI、序号和代次语义见 [完整交接协议](WEBGL_MOVEMENT_HANDOFF.md)。本轮只更改入口和访问许可，没有修改 Unity 客户端代码、数据库地址、角色存档或战斗场景。
 
-Origin 是**实际运行游戏的网页**的协议、主机和端口，不能填写 WSS URL。当前增加 IP 站点的 HTTPS Origin，并保留原来已授权的域名 Origin。Unity Cloud、其他本地调试端口或其他网页地址须分别加入精确允许列表。HTTPS 页面可直接连接受信任的 IP WSS。
+Origin 是**实际运行游戏的网页**的协议、主机和端口，不能填写 WSS URL。当前增加 IP 站点的 HTTPS Origin，并保留原来已授权的域名 Origin。2026-11-12 已按用户提供的 Origin 加入 `https://cloud.unity.com`，并通过 WSS 握手与 ping 验证。其他本地调试端口或网页地址须分别加入精确允许列表；若 Unity 预览游戏位于其他来源的 iframe，以实际 WebSocket 请求头为准。HTTPS 页面可直接连接受信任的 IP WSS。
 
 目前 IP 网站根目录仍是等待上传 Unity 构建产物的状态页；它根据当前网页地址显示 WSS，不代表 Unity 游戏已经发布。健康检查只表示转接进程响应，业务连通以角色验收为准。
 
