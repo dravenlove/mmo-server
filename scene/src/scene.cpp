@@ -221,6 +221,7 @@ Json Scene::Npc::json() const {
 }
 
 Scene::Scene(Config config) : config_(std::move(config)) {
+    if (config_.skill_lab_enabled && !config_.abilities_enabled) throw std::invalid_argument("skill lab requires ability mode");
     if (config_.abilities_enabled && !config_.combat_enabled) throw std::invalid_argument("abilities require combat mode");
     if (config_.elemental_enabled && config_.combat_enabled) throw std::invalid_argument("elemental mode must isolate persistent combat");
     std::random_device random;
@@ -511,8 +512,9 @@ Json Scene::execute(const std::string& path, const Json& request) {
     }
     if (config_.elemental_enabled && path=="/v1/elemental_cast") return cast_elemental(matching(request,true),request);
     if (!config_.combat_enabled && (path=="/v1/cast" || path=="/v1/revive")) throw Error(409,"combat is disabled in this scene");
-    auto& entity = matching(request, path == "/v1/move" || path == "/v1/view" || path == "/v1/cast" || path == "/v1/revive");
+    auto& entity = matching(request, path == "/v1/move" || path == "/v1/view" || path == "/v1/cast" || path == "/v1/revive" || path == "/v1/skill_init");
     if (path == "/v1/cast") return cast(entity, request);
+    if (path == "/v1/skill_init") return initialize_skill(entity, request);
     if (path == "/v1/revive") return revive(entity, request);
     if (path == "/v1/move") {
         if (config_.combat_enabled && entity.role.combat.dead) {

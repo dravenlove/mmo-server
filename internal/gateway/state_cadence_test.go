@@ -20,14 +20,14 @@ func TestSnapshotCadenceDoesNotSkipAnEarlyOrDelayedTick(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"role": role})
 			return
 		}
-		json.NewEncoder(w).Encode(View{Self: role, Players: []Role{role}, Scene: role.Scene, Tick: views.Add(1)})
+		json.NewEncoder(w).Encode(View{Self: role, Players: []Role{role}, Scene: role.Scene, Tick: views.Add(1), WorldEpoch: "world-a", EventCursor: 17, Events: json.RawMessage(`[{"id":17,"type":"damage"}]`)})
 	}))
 	defer scene.Close()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Route{Role: role, URL: scene.URL})
 	}))
 	defer backend.Close()
-	server, err := New(Config{Token: strings.Repeat("s", 32), BackendURL: backend.URL, Profile: "movement", LoginScene: role.Scene})
+	server, err := New(Config{Token: strings.Repeat("s", 32), BackendURL: backend.URL, Profile: "abilities", LoginScene: role.Scene})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +68,13 @@ func TestSnapshotCadenceDoesNotSkipAnEarlyOrDelayedTick(t *testing.T) {
 		if !state.OK || state.Op != "state" || state.Data.Tick != uint64(i+1) {
 			t.Fatalf("tick %d produced invalid state: %+v", i, state)
 		}
+		var events []json.RawMessage
+		if err := json.Unmarshal(state.Data.Events, &events); err != nil {
+			t.Fatal(err)
+		}
+		if (i == 0 && len(events) != 1) || (i > 0 && len(events) != 0) {
+			t.Fatalf("tick %d replayed event history: %s", i, state.Data.Events)
+		}
 	}
 }
 
@@ -75,7 +82,7 @@ func TestSnapshotRateDefaultsAndValidation(t *testing.T) {
 	for _, test := range []struct {
 		profile     string
 		input, want int
-	}{{"movement", 0, 20}, {"abilities", 0, 5}, {"full", 0, 5}, {"movement", 10, 10}} {
+	}{{"movement", 0, 20}, {"skill_lab", 0, 20}, {"abilities", 0, 5}, {"full", 0, 5}, {"movement", 10, 10}} {
 		server, err := New(Config{Token: strings.Repeat("r", 32), BackendURL: "http://localhost:8081", Profile: test.profile, StateHz: test.input})
 		if err != nil || server.cfg.StateHz != test.want {
 			t.Fatalf("profile %s rate %d: %v", test.profile, test.input, err)

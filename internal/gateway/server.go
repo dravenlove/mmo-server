@@ -59,27 +59,32 @@ type View struct {
 	ConfigAppliedTick    uint64          `json:"config_applied_tick,omitempty"`
 	Features             []string        `json:"features,omitempty"`
 	Battle               json.RawMessage `json:"battle,omitempty"`
+	SkillCooldowns       json.RawMessage `json:"skill_cooldowns,omitempty"`
 }
 type Request struct {
-	ID              string   `json:"id"`
-	Op              string   `json:"op"`
-	Name            string   `json:"name,omitempty"`
-	Token           string   `json:"token,omitempty"`
-	Seq             int64    `json:"seq,omitempty"`
-	DX              float64  `json:"dx,omitempty"`
-	DY              float64  `json:"dy,omitempty"`
-	Target          string   `json:"target_scene_id,omitempty"`
-	RequestID       string   `json:"request_id,omitempty"`
-	SkillID         string   `json:"skill_id,omitempty"`
-	TargetID        string   `json:"target_id,omitempty"`
-	X               *float64 `json:"x,omitempty"`
-	Y               *float64 `json:"y,omitempty"`
-	SceneID         string   `json:"scene_id,omitempty"`
-	OwnerEpoch      *int64   `json:"owner_epoch,omitempty"`
-	Element         string   `json:"element,omitempty"`
-	receivedRoute   *connectionRoute
-	receivedAt      time.Time
-	validationError string
+	ID                        string          `json:"id"`
+	Op                        string          `json:"op"`
+	Name                      string          `json:"name,omitempty"`
+	Token                     string          `json:"token,omitempty"`
+	Seq                       int64           `json:"seq,omitempty"`
+	DX                        float64         `json:"dx,omitempty"`
+	DY                        float64         `json:"dy,omitempty"`
+	Target                    string          `json:"target_scene_id,omitempty"`
+	RequestID                 string          `json:"request_id,omitempty"`
+	SkillID                   string          `json:"skill_id,omitempty"`
+	TargetID                  string          `json:"target_id,omitempty"`
+	X                         *float64        `json:"x,omitempty"`
+	Y                         *float64        `json:"y,omitempty"`
+	SceneID                   string          `json:"scene_id,omitempty"`
+	OwnerEpoch                *int64          `json:"owner_epoch,omitempty"`
+	Element                   string          `json:"element,omitempty"`
+	Definition                json.RawMessage `json:"definition,omitempty"`
+	DefinitionVersion         uint64          `json:"definition_version,omitempty"`
+	ExpectedDefinitionVersion uint64          `json:"expected_definition_version,omitempty"`
+	WorldEpoch                string          `json:"world_epoch,omitempty"`
+	receivedRoute             *connectionRoute
+	receivedAt                time.Time
+	validationError           string
 }
 type Response struct {
 	ID    string `json:"id,omitempty"`
@@ -130,12 +135,12 @@ func New(c Config) (*Server, error) {
 	if c.Profile == "" {
 		c.Profile = "full"
 	}
-	if c.Profile != "full" && c.Profile != "movement" && c.Profile != "abilities" && c.Profile != "elemental" {
-		return nil, errors.New("GATEWAY_PROFILE 必须为 full、movement、abilities 或 elemental")
+	if c.Profile != "full" && c.Profile != "movement" && c.Profile != "abilities" && c.Profile != "elemental" && c.Profile != "skill_lab" {
+		return nil, errors.New("unknown GATEWAY_PROFILE")
 	}
 	if c.StateHz == 0 {
 		c.StateHz = 5
-		if c.Profile == "movement" {
+		if c.Profile == "movement" || c.Profile == "skill_lab" {
 			c.StateHz = 20
 		}
 	}
@@ -440,10 +445,10 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 				return
 			}
 			r.receivedAt = time.Now()
-			if s.cfg.Profile == "elemental" {
+			if s.cfg.Profile == "elemental" || s.cfg.Profile == "skill_lab" {
 				r.receivedRoute = published.Load()
 			}
-			if r.Op == "cast" && (r.SkillID == "arc_bolt" || r.SkillID == "stone_wall") {
+			if r.Op == "cast" && (s.cfg.Profile == "skill_lab" || r.SkillID == "arc_bolt" || r.SkillID == "stone_wall") {
 				var fields map[string]json.RawMessage
 				json.Unmarshal(scanner.Bytes(), &fields)
 				for _, key := range []string{"seq", "dx", "dy"} {
@@ -496,9 +501,19 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 		}
 	}()
 	var writeMu sync.Mutex
+	var sentWorld string
+	var sentEvent uint64
 	write := func(r Response) bool {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		var delivered *View
+		if v, ok := r.Data.(View); ok && v.WorldEpoch != "" && (r.Op == "view" || r.Op == "state") {
+			if r.Op == "state" && sentWorld == v.WorldEpoch && v.EventCursor >= sentEvent {
+				v.Events = eventsAfter(v.Events, sentEvent)
+			}
+			delivered = &v
+			r.Data = v
+		}
 		var data bytes.Buffer
 		encoder := json.NewEncoder(&data)
 		encoder.SetEscapeHTML(false)
@@ -510,6 +525,9 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 		}
 		c.SetWriteDeadline(time.Now().Add(3 * time.Second))
 		_, err := io.Copy(c, &data)
+		if err == nil && delivered != nil {
+			sentWorld, sentEvent = delivered.WorldEpoch, delivered.EventCursor
+		}
 		return err == nil
 	}
 	moveWG.Add(1)
@@ -524,10 +542,33 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 	}
 	var route *Route
 	var lastView *View
+	// 每连接最多一个状态查询在途；慢查询期间的定时需求合并成一次。
+	views := make(chan viewResult, 1)
+	var viewWG sync.WaitGroup
+	viewPending, viewWanted := false, false
+	// 归属、显式快照或目录更新后，废弃此前启动的异步查询结果。
+	var viewGeneration uint64
+	startView := func(current Route) {
+		viewPending = true
+		viewWanted = false
+		viewWG.Add(1)
+		generation := viewGeneration
+		go func() {
+			defer viewWG.Done()
+			result := viewResult{route: current, generation: generation}
+			result.err = s.sceneCall(ctx, current, "/v1/view", ref(current.Role), &result.view)
+			select {
+			case views <- result:
+			case <-ctx.Done():
+			}
+		}()
+	}
+	checkpoints := newCheckpointWriter(s)
 	defer func() {
 		cancel()
 		c.Close()
 		moveWG.Wait()
+		viewWG.Wait()
 		published.Store(nil)
 		if route != nil {
 			// 先按精确会话停止并隐藏角色，再保存该回执中的最终权威位置。
@@ -538,8 +579,9 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 				final.Role.Coins = route.Role.Coins
 				lastView = &View{Self: final.Role, Scene: final.Role.Scene}
 			}
-			s.checkpoint(context.Background(), *route, lastView)
+			checkpoints.submit(*route, lastView)
 		}
+		checkpoints.close()
 	}()
 	// 每个定时事件只发送一份最新状态，不再用上一帧时间加周期重复筛选。
 	// Ticker 的相邻时间戳有纳秒级偏差；重复比较 now+interval 会漏掉整次推送。
@@ -555,6 +597,26 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 				write(Response{Op: "error", Error: err.Error()})
 			}
 			return
+		case result := <-views:
+			viewPending = false
+			if route != nil && sameRole(route.Role, result.route.Role) && result.generation == viewGeneration {
+				if result.err != nil {
+					viewRetryAt = time.Now().Add(time.Second)
+					viewWanted = false
+					if !write(Response{Op: "state", Error: result.err.Error()}) {
+						return
+					}
+				} else if freshView(lastView, result.view) {
+					overlayBalance(&result.view, route.Role)
+					lastView = &result.view
+					if !write(Response{Op: "state", OK: true, Data: s.clientView(result.view)}) {
+						return
+					}
+				}
+			}
+			if viewWanted && route != nil && !time.Now().Before(viewRetryAt) {
+				startView(*route)
+			}
 		case req := <-requests:
 			resp := Response{ID: req.ID, Op: req.Op, OK: true}
 			if req.validationError != "" {
@@ -571,6 +633,12 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 			}
 			if s.cfg.Profile == "abilities" && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "revive" {
 				if !write(Response{ID: req.ID, Op: req.Op, Error: "operation is not available in abilities profile"}) {
+					return
+				}
+				continue
+			}
+			if s.cfg.Profile == "skill_lab" && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "revive" && req.Op != "skill_init" {
+				if !write(Response{ID: req.ID, Op: req.Op, Error: "operation is not available in skill lab profile"}) {
 					return
 				}
 				continue
@@ -593,6 +661,9 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 				}
 				if s.cfg.Profile == "elemental" {
 					data["protocol_version"] = "webgl-elemental-v1"
+				}
+				if s.cfg.Profile == "skill_lab" {
+					data["protocol_version"] = "webgl-skill-lab-v1"
 				}
 				resp.Data = data
 			case "register":
@@ -637,6 +708,7 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 					changingOwner := req.Op != "cast"
 					if changingOwner {
 						moveBarrier.Lock()
+						viewGeneration++
 					}
 					var out any
 					out, err = s.elementalOperation(serviceCtx, req, route)
@@ -665,6 +737,22 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 					continue
 				}
 				switch req.Op {
+				case "skill_init":
+					viewGeneration++
+					if s.cfg.Profile != "skill_lab" {
+						err = errors.New("skill initialization is disabled")
+						break
+					}
+					if req.SkillID == "" || len(req.SkillID) > 32 || len(req.Definition) == 0 || len(req.Definition) > 2048 {
+						err = errors.New("skill_id and definition are required")
+						break
+					}
+					p := ref(route.Role)
+					p["skill_id"], p["definition"], p["world_epoch"] = req.SkillID, req.Definition, req.WorldEpoch
+					p["expected_definition_version"] = req.ExpectedDefinitionVersion
+					var out map[string]json.RawMessage
+					err = s.sceneCall(serviceCtx, *route, "/v1/skill_init", p, &out)
+					resp.Data = out
 				case "cast", "revive":
 					if req.Seq <= 0 {
 						err = errors.New("positive action seq is required")
@@ -678,7 +766,7 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 							break
 						}
 						p["skill_id"], p["target_id"] = req.SkillID, req.TargetID
-						if req.SkillID == "arc_bolt" || req.SkillID == "stone_wall" {
+						if s.cfg.Profile == "skill_lab" || req.SkillID == "arc_bolt" || req.SkillID == "stone_wall" {
 							p["dx"], p["dy"] = req.DX, req.DY
 							if req.X != nil {
 								p["x"] = *req.X
@@ -686,6 +774,10 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 							if req.Y != nil {
 								p["y"] = *req.Y
 							}
+						}
+						if s.cfg.Profile == "skill_lab" {
+							p["definition_version"] = req.DefinitionVersion
+							p["world_epoch"] = req.WorldEpoch
 						}
 					}
 					var out map[string]json.RawMessage
@@ -695,12 +787,13 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 							lastView = snapshot
 							// 持久化失败只记录日志，不能把已成功的结算伪装成未执行。
 							if string(out["accepted"]) != "false" {
-								s.checkpoint(serviceCtx, *route, lastView)
+								checkpoints.submit(*route, lastView)
 							}
 						}
 					}
 					resp.Data = out
 				case "view":
+					viewGeneration++
 					var v View
 					err = s.sceneCall(ctx, *route, "/v1/view", ref(route.Role), &v)
 					if err == nil {
@@ -709,6 +802,7 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 						resp.Data = s.clientView(v)
 					}
 				case "transfer":
+					viewGeneration++
 					if req.RequestID == "" || len(req.RequestID) > 128 {
 						err = errors.New("request_id is required (1..128 characters)")
 						break
@@ -777,25 +871,14 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 				publish(route)
 			}
 			if !now.Before(viewRetryAt) {
-				var v View
-				err := s.sceneCall(ctx, *route, "/v1/view", ref(route.Role), &v)
-				if err != nil {
-					viewRetryAt = time.Now().Add(time.Second)
-					if !write(Response{Op: "state", Error: err.Error()}) {
-						return
-					}
-				} else {
-					viewRetryAt = time.Time{}
-					overlayBalance(&v, route.Role)
-					lastView = &v
-					if !write(Response{Op: "state", OK: true, Data: s.clientView(v)}) {
-						return
-					}
+				viewWanted = true
+				if !viewPending {
+					startView(*route)
 				}
 			}
 			if !now.Before(nextSave) {
 				nextSave = now.Add(2 * time.Second)
-				s.checkpoint(serviceCtx, *route, lastView)
+				checkpoints.submit(*route, lastView)
 			}
 		}
 	}

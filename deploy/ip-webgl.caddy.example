@@ -7,6 +7,14 @@ https://{$MMO_PUBLIC_IP} {
             disable_tlsalpn_challenge
         }
     }
+    handle /skills/ws {
+        rewrite * /ws
+        reverse_proxy 127.0.0.1:7008
+    }
+    handle /skills/healthz {
+        rewrite * /healthz
+        reverse_proxy 127.0.0.1:7008
+    }
     handle /elemental/ws {
         rewrite * /ws
         reverse_proxy 127.0.0.1:7006

@@ -113,7 +113,7 @@ public:
 
     mmo::Json health() const {
         return {{"ok", true}, {"scene_id", config_.scene_id},
-                {"tick", tick_.load()}, {"players", players_.load()}, {"mode",config_.elemental_enabled?"elemental":config_.abilities_enabled?"abilities":config_.combat_enabled?"combat":"movement"}};
+                {"tick", tick_.load()}, {"players", players_.load()}, {"mode",config_.skill_lab_enabled?"skill_lab":config_.elemental_enabled?"elemental":config_.abilities_enabled?"abilities":config_.combat_enabled?"combat":"movement"}};
     }
 
 private:
@@ -200,9 +200,10 @@ int main(int argc, char** argv) {
         config.scene_id = environment("SCENE_ID", "scene-1");
         if (config.scene_id.empty() || config.scene_id.size() > 128) throw std::runtime_error("invalid SCENE_ID");
         const auto mode=environment("SCENE_MODE", "combat");
-        if (mode!="combat" && mode!="movement" && mode!="abilities" && mode!="elemental") throw std::invalid_argument("SCENE_MODE must be combat, movement, abilities or elemental");
-        config.combat_enabled=mode=="combat" || mode=="abilities";
-        config.abilities_enabled=mode=="abilities";
+        if (mode!="combat" && mode!="movement" && mode!="abilities" && mode!="elemental" && mode!="skill_lab") throw std::invalid_argument("unknown SCENE_MODE");
+        config.combat_enabled=mode=="combat" || mode=="abilities" || mode=="skill_lab";
+        config.abilities_enabled=mode=="abilities" || mode=="skill_lab";
+        config.skill_lab_enabled=mode=="skill_lab";
         config.elemental_enabled=mode=="elemental";
         config.elemental_arena_id=environment("ELEMENTAL_ARENA_ID","scene-elemental-arena");
         if (config.elemental_enabled && (config.elemental_arena_id.empty() || config.elemental_arena_id.size()>64 || config.elemental_arena_id==config.scene_id)) throw std::invalid_argument("invalid ELEMENTAL_ARENA_ID");
@@ -245,7 +246,7 @@ int main(int argc, char** argv) {
             reply(response, 200, runtime.health());
         });
 
-        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/move_batch", "/v1/disconnect", "/v1/view", "/v1/cast", "/v1/elemental_cast", "/v1/capabilities", "/v1/revive", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove",
+        for (const auto* path : {"/v1/enter", "/v1/move", "/v1/move_batch", "/v1/disconnect", "/v1/view", "/v1/cast", "/v1/skill_init", "/v1/elemental_cast", "/v1/capabilities", "/v1/revive", "/v1/freeze", "/v1/unfreeze", "/v1/prepare", "/v1/activate", "/v1/remove",
                 "/v1/config/status", "/v1/config/reload", "/v1/config/apply", "/v1/config/validate"}) {
             server.Post(path, [&, path](const httplib::Request& request, httplib::Response& response) {
                 if (!token_matches(request.get_header_value("X-Internal-Token"), token)) {

@@ -145,6 +145,16 @@ if args.webgl:
     elemental_gate['environment'].update(GATEWAY_PROFILE='elemental', GATEWAY_LOGIN_SCENE='scene-elemental-world', GATEWAY_ARENA_SCENE='scene-elemental-arena')
     elemental_gate['ports'] = [{'target': 7000, 'published': str(ports['elemental']), 'host_ip': '127.0.0.1', 'protocol': 'tcp'}]
     config['services']['gateway-elemental'] = elemental_gate
+    ports['skills'] = free_port()
+    skill_scene = copy.deepcopy(web_scene)
+    skill_scene['environment'].update(SCENE_ID='scene-skills', SCENE_PORT='9006', SCENE_MODE='skill_lab', TICK_HZ='20')
+    config['services']['scene-skills'] = skill_scene
+    backend['environment']['SCENES'] += ',scene-skills=http://scene-skills:9006'
+    backend['depends_on']['scene-skills'] = {'condition': 'service_healthy'}
+    skill_gate = copy.deepcopy(web_gate)
+    skill_gate['environment'].update(GATEWAY_PROFILE='skill_lab', GATEWAY_LOGIN_SCENE='scene-skills')
+    skill_gate['ports'] = [{'target': 7000, 'published': str(ports['skills']), 'host_ip': '127.0.0.1', 'protocol': 'tcp'}]
+    config['services']['gateway-skills'] = skill_gate
 cfg = work / 'compose.json'
 cfg.write_text(json.dumps(config, indent=2), encoding='utf-8')
 compose = ['docker', 'compose', '-f', str(cfg), '-p', project]
@@ -221,6 +231,11 @@ try:
         (work / 'elemental.log').write_text(elemental_check.stdout + elemental_check.stderr, encoding='utf-8')
         if elemental_check.returncode: raise AssertionError(elemental_check.stdout + elemental_check.stderr)
         passed('WebSocket elemental arenas, real owner epochs, stable session, reactions, end-state and return position')
+        child_env['MMO_TEST_SKILL_LAB_GATEWAY'] = '127.0.0.1:' + str(ports['skills'])
+        skill_check = run(['go', 'test', './internal/wsbridge', '-run', '^TestSkillLabIntegration$', '-count=1', '-v', '-timeout', '90s'], timeout=100)
+        (work / 'skill-lab.log').write_text(skill_check.stdout + skill_check.stderr, encoding='utf-8')
+        if skill_check.returncode: raise AssertionError(skill_check.stdout + skill_check.stderr)
+        passed('Client-registered skill definitions, authoritative shared instances, configured PvP and compression')
     if args.external_auth:
         compose_ok('stop', 'auth')
         new_peer().request('login', ok=False, token=auth['token'])

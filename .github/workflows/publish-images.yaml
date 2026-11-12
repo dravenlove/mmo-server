@@ -54,6 +54,7 @@ jobs:
           go build -o bin/gateway ./cmd/gateway
           cp build/scene-ci/scene-server bin/scene-server
           python3 scripts/smoke_elemental.py
+          python3 scripts/smoke_skill_lab.py
 
       - name: Build and verify Linux image packages
         run: python3 scripts/package_images.py --tag "$IMAGE_TAG" --platform linux/amd64

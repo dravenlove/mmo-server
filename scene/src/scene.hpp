@@ -28,6 +28,7 @@ struct Config {
     std::size_t max_tracked_roles = 8192;
     bool combat_enabled = true;
     bool abilities_enabled = false;
+    bool skill_lab_enabled = false;
     bool pvp_enabled = true;
     bool elemental_enabled = false;
     std::string elemental_arena_id = "scene-elemental-arena";
@@ -62,6 +63,14 @@ public:
 
 private:
     enum class Mode { Active, Frozen, Prepared };
+    struct SkillDefinition {
+        std::string id, name, kind;
+        int damage = 28, mp_cost = 10;
+        double cooldown = 1.2, range = 24, speed = 18, radius = .25;
+        double length = 6, thickness = .6, duration = 6;
+        std::uint64_t version = 0;
+        Json json() const;
+    };
     struct Entity {
         Role role;
         Mode mode = Mode::Active;
@@ -78,6 +87,8 @@ private:
         double elemental_clock = 0;
         std::map<std::string, std::pair<std::string, Json>> elemental_requests;
         std::deque<std::string> elemental_request_order;
+        std::map<std::string, SkillDefinition> skill_definitions;
+        std::map<std::string, double> skill_cooldowns;
     };
     struct Npc {
         std::string id, name, kind, target_id;
@@ -91,13 +102,20 @@ private:
     };
     struct Projectile {
         std::string id, owner_id;
+        std::string skill_id = "arc_bolt";
         std::int64_t owner_epoch = 0, session_epoch = 0;
+        std::uint64_t definition_version = 0;
+        double speed = 18, radius = .25;
+        int damage = 28;
         double x = 0, y = 0, dx = 0, dy = 0, remaining = 24;
         Json json() const;
     };
     struct Wall {
         std::string id, owner_id;
+        std::string skill_id = "stone_wall";
         std::int64_t owner_epoch = 0, session_epoch = 0;
+        std::uint64_t definition_version = 0;
+        double length = 6, thickness = .6;
         double x = 0, y = 0, nx = 1, ny = 0, remaining = 6;
         Json json() const;
     };
@@ -114,6 +132,7 @@ private:
     std::map<std::string, Projectile> projectiles_;
     std::map<std::string, Wall> walls_;
     std::uint64_t next_object_id_ = 0;
+    std::uint64_t next_skill_definition_id_ = 0;
     std::string world_epoch_;
     std::uint64_t next_elemental_id_ = 0;
     Json combat_config_;
@@ -135,6 +154,8 @@ private:
     void emit(const std::string& type, const std::string& source, const std::string& target,
         const std::string& skill, int value, double x, double y, const std::string& object_id = "");
     Json cast_ability(Entity& entity, const Json& request);
+    Json initialize_skill(Entity& entity, const Json& request);
+    SkillDefinition ability_definition(const Entity& entity, const std::string& id) const;
     void ability_view(Json& result, const Entity& entity) const;
     void step_abilities(double dt);
     std::pair<double, double> wall_move(double x, double y, double nx, double ny, double radius) const;

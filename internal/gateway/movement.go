@@ -74,7 +74,7 @@ func (s *Server) moveWorker(ctx context.Context, queue <-chan Request, published
 		var failure error
 		var results []Response
 		var rejected []Response
-		if s.cfg.Profile == "elemental" {
+		if s.cfg.Profile == "elemental" || s.cfg.Profile == "skill_lab" {
 			kept := batch[:0]
 			for _, request := range batch {
 				if request.receivedRoute == nil {

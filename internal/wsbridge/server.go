@@ -5,6 +5,7 @@ package wsbridge
 import (
 	"bufio"
 	"bytes"
+	"compress/flate"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -57,7 +58,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.ProtocolVersion == "" {
 		cfg.ProtocolVersion = "webgl-movement-v1"
 	}
-	if cfg.ProtocolVersion != "webgl-movement-v1" && cfg.ProtocolVersion != "webgl-combat-v1" && cfg.ProtocolVersion != "webgl-elemental-v1" {
+	if cfg.ProtocolVersion != "webgl-movement-v1" && cfg.ProtocolVersion != "webgl-combat-v1" && cfg.ProtocolVersion != "webgl-elemental-v1" && cfg.ProtocolVersion != "webgl-skill-lab-v1" {
 		return nil, errors.New("unsupported WebSocket protocol version")
 	}
 	s := &Server{cfg: cfg, clients: make(map[*websocket.Conn]net.Conn), origins: make(map[string]bool)}
@@ -124,8 +125,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer upstream.Close()
 	upgrade := websocket.Upgrader{
-		HandshakeTimeout: 5 * time.Second,
-		CheckOrigin:      func(req *http.Request) bool { return s.origins[req.Header.Get("Origin")] },
+		HandshakeTimeout:  5 * time.Second,
+		EnableCompression: true,
+		CheckOrigin:       func(req *http.Request) bool { return s.origins[req.Header.Get("Origin")] },
 		Error: func(w http.ResponseWriter, req *http.Request, status int, _ error) {
 			s.reject(req, status, "invalid_upgrade")
 			http.Error(w, http.StatusText(status), status)
@@ -136,6 +138,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer ws.Close()
+	if err := ws.SetCompressionLevel(flate.BestSpeed); err != nil {
+		return
+	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -202,7 +207,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	for {
-		kind, message, readErr := ws.ReadMessage()
+		kind, reader, readErr := ws.NextReader()
+		var message []byte
+		if readErr == nil {
+			message, readErr = io.ReadAll(io.LimitReader(reader, MaxFrame+1))
+			if len(message) > MaxFrame-1 {
+				finish("message_too_large", websocket.CloseMessageTooBig, 0)
+				return
+			}
+		}
 		if readErr != nil {
 			reason, code, peerCode := "client_transport_closed", 0, 0
 			var closeErr *websocket.CloseError
