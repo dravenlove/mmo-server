@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from smoke import ROOT,free_port,http,Peer
 
 def main():
-    work=ROOT/'output'/('elemental-smoke-'+time.strftime('%Y%m%d-%H%M%S'));work.mkdir()
+    work=ROOT/'output'/('elemental-smoke-'+time.strftime('%Y%m%d-%H%M%S'));work.mkdir(parents=True)
     ports={key:free_port() for key in ('scene','backend','gateway','health','proxy')};assert len(set(ports.values()))==5
     common=dict(os.environ,INTERNAL_TOKEN=secrets.token_hex(32),TLS_CERT_FILE='',TLS_KEY_FILE='',COMBAT_CONFIG_FILE='')
     scene=f"http://127.0.0.1:{ports['proxy']}"
