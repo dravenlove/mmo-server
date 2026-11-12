@@ -2,6 +2,8 @@
 
 协议扩展能力：`elemental_arena_v1`；入口协议标识：`webgl-elemental-v1`。日期：2026-11-12（Asia/Shanghai）。实现依据客户端 [AXIOMANCY `45cde240`](https://github.com/dravenlove/AXIOMANCY/tree/45cde2405bfbed3b2bd814518775159d43f5f636) 的元素需求、`CombatSimulation.cs` 与 `LocalElementalAuthority.cs`。本次只实现服务端；没有修改 Unity 项目或启动云构建。
 
+交付镜像 `elemental-20261112-v1`、运行源码 `12ed3a8aaf44bd93093bd014b036327bc9f343de` 已发布并部署。两账号公网协议、实际客户端解析器及原移动/弹道入口回归均通过；浏览器真实画面和输入操作由客户端侧继续验收。具体证据与数据保留检查见 [VALIDATION.md](VALIDATION.md)。
+
 ## 入口与能力
 
 下列 IP 为占位地址，交付时填写实际游戏主机 IP。
