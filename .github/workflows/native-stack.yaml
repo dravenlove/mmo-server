@@ -49,7 +49,7 @@ jobs:
           python3 scripts/test_native_legacy.py --build build/native-ci --scene build/scene-ci/scene-server
           go test ./...
       - name: Build runtime image
-        run: docker build --progress plain -f Dockerfile.native -t mmo/native:ci --label "org.opencontainers.image.revision=$GITHUB_SHA" .
+        run: docker build --progress plain -f Dockerfile.native -t mmo/native:ci --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" .
       - name: Verify runtime image and fresh volumes
         run: python3 scripts/test_native_image.py --image mmo/native:ci
       - name: Publish validated image
@@ -60,7 +60,8 @@ jobs:
         run: |
           IMAGE_TAG="${REQUESTED_TAG:-cpp-core-${GITHUB_SHA:0:12}}"
           [[ "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] || exit 2
-          image="ghcr.io/${GITHUB_REPOSITORY,,}/native:$IMAGE_TAG"
+          # 复用现有公开包的权限，C++使用独立不可变标签，不覆盖旧Go镜像。
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/backend:$IMAGE_TAG"
           docker tag mmo/native:ci "$image"
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker push "$image"

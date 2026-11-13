@@ -1,7 +1,7 @@
 # 叠加于 game-host.compose.yaml。保留原场景镜像、数据卷、网络与 TCP 端口。
 # Compose >= 2.24.4；切换前必须先停止旧 Backend 写入者与占用 WS 端口的 bridge。
 x-native: &native
-  image: ${MMO_IMAGE_PREFIX:-ghcr.io/dravenlove/mmo-server}/native:${MMO_NATIVE_IMAGE_TAG:?Set a validated immutable native image tag}
+  image: ${MMO_IMAGE_PREFIX:-ghcr.io/dravenlove/mmo-server}/${MMO_NATIVE_IMAGE_NAME:-backend}:${MMO_NATIVE_IMAGE_TAG:?Set a validated immutable native image tag}
   build: !reset null
 
 x-websocket: &websocket

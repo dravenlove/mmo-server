@@ -27,7 +27,7 @@ flowchart LR
 | `native-game-service` | `native/game_service/` | Go Backend |
 | `native-db` | `native/persistence/` | MySQL / SQLite 预处理、事务与写入者锁 |
 
-新镜像名是 `<原镜像前缀>/native:<已验证的新标签>`，三个程序放在同一镜像，由 Compose `entrypoint` 选择。六个场景的原镜像标签独立保留。Go 仍可用于诊断 CLI、回归夹具和运维；未切换的旧部署当然仍运行 Go 服务。
+发布复用既有公开镜像包：`<原镜像前缀>/backend:cpp-core-<源码提交前12位>`，C++ 程序放在同一镜像，由 Compose `entrypoint` 选择。这个标签对应 C++ 实现，原 Go Backend 标签不变；生产 override 默认包名 `backend`，自建仓库可用 `MMO_NATIVE_IMAGE_NAME` 改名。六个场景的原镜像标签独立保留，本机 Docker 演示用打包在 C++ 镜像内的 Scene。Go 仍可用于诊断 CLI、回归夹具和运维；未切换的旧部署当然仍运行 Go 服务。
 
 ## 构建与验证
 
@@ -72,7 +72,7 @@ curl --fail http://127.0.0.1:18080/readyz
 
 ## 两台 VPS 切换规则
 
-不要在小规格 VPS 编译。先由 `Native C++ stack` 工作流完成回归和 Linux 镜像构建，选择全新的、已成功发布且匿名可拉取的标签。保留原 `MMO_IMAGE_TAG`、`MMO_GATEWAY_IMAGE_TAG`、`MMO_BACKEND_IMAGE_TAG`、`MMO_SKILL_LAB_IMAGE_TAG`，只新增 `MMO_NATIVE_IMAGE_TAG`。禁止把本地 `mmo/native:dev` 当成公开镜像。
+不要在小规格 VPS 编译。先由 `Native C++ stack` 工作流完成回归和 Linux 镜像构建，选择全新的、已成功发布且匿名可拉取的 `backend:cpp-core-…` 标签。保留原 `MMO_IMAGE_TAG`、`MMO_GATEWAY_IMAGE_TAG`、`MMO_BACKEND_IMAGE_TAG`、`MMO_SKILL_LAB_IMAGE_TAG`，只新增 `MMO_NATIVE_IMAGE_TAG`。生产 override 默认复用公开 backend 包；本机示例默认构建 `mmo/native:dev`，不能把本地开发名当成公开镜像。
 
 使用 Docker Compose >= 2.24.4（override 用 `!reset` 清除旧 Go build）。配置校验和拉镜像不切换服务：
 

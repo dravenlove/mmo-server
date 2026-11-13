@@ -1,6 +1,6 @@
 name: mmo-native-local
 x-common: &common
-  image: ${MMO_IMAGE_PREFIX:-mmo}/native:${MMO_NATIVE_IMAGE_TAG:-dev}
+  image: ${MMO_IMAGE_PREFIX:-mmo}/${MMO_NATIVE_IMAGE_NAME:-native}:${MMO_NATIVE_IMAGE_TAG:-dev}
   build:
     context: ..
     dockerfile: Dockerfile.native
