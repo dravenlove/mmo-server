@@ -5,6 +5,18 @@
 
 
 
+## 2026-11-13：账号密码登录部署与公网验收
+
+账号密码协议与游戏侧镜像为 `account-20261113-v1` / `674a5502f18671434f1162afa86a448990517510`，鉴权修正镜像为 `account-auth-20261113-v2` / `4ab0058a478b4c6a66f707b6a66acde7eda0a615`。[完整 Linux 发行 43349657010](https://github.com/dravenlove/mmo-server/actions/runs/43349657010) 通过 Go/race/vet、9 项 CTest、原生技能、SQLite/MySQL Docker、独立鉴权、真实 WebSocket 账号和旧账号绑定验证；[鉴权补丁发行 43352755405](https://github.com/dravenlove/mmo-server/actions/runs/43352755405) 通过 Go/race/vet、MySQL 回归和匿名镜像拉取。
+
+真实部署账号没有 DELETE 权限，首版 Auth 的过期票据 DELETE 使注册事务回滚。修正为每账号最多五条记录循环复用，保留原 MySQL 权限。新增隔离 MySQL 用例明确证明测试账号不能 DELETE，再完成注册、登录、六张票据轮换、最早票据拒绝及最新票据可用；未依赖 root 权限掩盖部署问题。SQLite 用例覆盖加盐密码哈希、错误密码、用户名存在性统一失败、到期、重启、绑定不覆盖旧密码、原 token 保留与限流；Backend 验证临时票据不会污染旧角色身份哈希，Auth 重启导入仍成功。
+
+最终部署检查通过：12 个游戏服务及独立 Auth 健康，Auth 修正版重启计数 0；六个 C++ 场景容器 ID、原 Native bridge、隧道和数据卷保持不变。更新时原角色与战斗快照逐项一致；公网验收后原 11 个角色的名字、凭据哈希、金币仍一致，新增 1 个受控测试账号，角色总数 12，未完成迁移 0。配置与数据库私有备份位于 `backups/account-20261113-v1/`，Auth 补丁备份位于鉴权机 `backups/account-auth-20261113-v2/`，未恢复旧数据库覆盖新数据。
+
+Windows 客户机通过可信 IP TLS 和实际 Unity iframe Origin，完成新账号注册、错误密码 401，以及四个公网入口的密码取票据、原 login 入场、权威 view；已入场后账号操作正常拒绝。受控凭据仅存在本机受限目录，不写入 Git。四个 HTTPS 健康入口通过。该次注册约 1.07 秒，正确密码取票据约 635～644ms，随后入场 login 约 646～662ms；这是一次跨地域鉴权/数据库链路的协议观测，不是容量、游戏动作响应或浏览器画面测量。在线移动与技能继续绕过 Auth。
+
+交付 [账号登录协议](ACCOUNT_LOGIN.md) 与 [网络协议选择](NETWORK_TRANSPORT.md)；没有修改或构建 Unity 客户端，登录 UI 仍需按协议接入。
+
 ## 2026-11-13：参数化技能交付复查
 
 09:39（Asia/Shanghai）只读复查通过：12 个游戏服务健康，五个原场景容器 ID 保持不变；五个 Gateway、新技能 Scene 和 Native bridge 仍为 `0c48fbe15d6548fce6411591911b51f5311c68ce`。四个入口健康检查与独立 Auth 正常，Auth 未重启。未重跑会改变账号状态的业务探针；下面的功能和延迟数字仍是 2026-11-12 的历史实测，不是今天重新测得的浏览器指标。
