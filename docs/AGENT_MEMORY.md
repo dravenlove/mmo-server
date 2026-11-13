@@ -207,6 +207,8 @@ Windows 使用 `scripts/build.ps1` 和带 `-C Release` 的 CTest。真实规则/
 
 以下是接手线索，不是自动执行任务或部署授权：
 
+- 2026-11-13 已整理 [房间制架构参考与建议](ROOM_ARCHITECTURE_REFERENCE.md)，参考 Steam、Photon、GameLift、Nakama、Riot 及 Agones 官方资料。属于研究稿，通用大厅/组房/开局/多房间 Worker 尚未实现，不能据此替换现网或声称已有房间服务。
+
 - Unity 登录 UI 接入 `account_* → login`；新参数技能解析、定义编辑和实例表现仍需客户端工作。
 - 真实浏览器输入到画面的延迟、预测/纠正/插值、单客户端战斗卡顿仍需浏览器测量；服务器协议延迟不能替代该验证。
 - 新行为组件、更多游戏玩法、生产账号能力、技能定义持久化和原生 UDP/KCP 接入都需要各自的明确需求。
