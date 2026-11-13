@@ -105,4 +105,4 @@ sudo docker compose --env-file deploy/game-host.env \
   -f deploy/native-room-game.override.yaml config --quiet
 ```
 
-设置经验证的 `MMO_ROOM_IMAGE_TAG` 后先 pull；维护窗口中备份并串行切换 Backend/Gateway/scene-skills。Auth 和其他五个旧 Scene 标签保留。脚本目录以只读卷挂载，默认仓库 `scripts/gameplay`，可用 `ROOM_GAMEPLAY_DIR` 指定服务端归档目录。实际发布标签与验证证据见 [VALIDATION.md](VALIDATION.md)，不要把阶段 2 的 cpp-core 标签当作已有 native-worker。
+已验证标签为 `MMO_ROOM_IMAGE_TAG=cpp-room-91f4800c8a13`，完整镜像为 `ghcr.io/dravenlove/mmo-server/backend:cpp-room-91f4800c8a13`。先 pull，再在维护窗口中备份并串行切换 Backend/Gateway/scene-skills。首次叠加 C++ 第二层还需设置 `MMO_NATIVE_IMAGE_TAG` 与实际 `NATIVE_ALLOWED_ORIGINS`，详见 [运行手册](NATIVE_CPP_RUNBOOK.md)。Auth 和其他五个旧 Scene 标签保留。脚本目录以只读卷挂载，默认仓库 `scripts/gameplay`，可用 `ROOM_GAMEPLAY_DIR` 指定服务端归档目录。revision、digest 与验证证据见 [VALIDATION.md](VALIDATION.md)，不要把阶段 2 的 cpp-core 标签当作已有 native-worker。

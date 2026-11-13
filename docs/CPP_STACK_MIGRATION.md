@@ -1,6 +1,6 @@
 # C++ 游戏服务技术栈迁移方案
 
-日期：2026-11-13，Asia/Shanghai。用户已选择：玩家网关也迁至 C++，Go 主要用于运维工具。**阶段 1 / 2 的 C++ Gateway、AccountService、GameService 已有历史验证与镜像记录；本轮源码增加阶段 3 的多房间 Worker、EnTT 权威存储和受限 Lua 技能编排。见 [核心服务构建与切换](NATIVE_CPP_RUNBOOK.md)、[房间交接](ROOMS_LUA_ECS.md)及 [验证记录](VALIDATION.md)。本轮镜像尚待统一 CI 发布，未切换 VPS；Protobuf 与安全 KCP 仍未实现。**
+日期：2026-11-13，Asia/Shanghai。用户已选择：玩家网关也迁至 C++，Go 主要用于运维工具。**阶段 1 / 2 的 C++ Gateway、AccountService、GameService 已有历史验证与镜像记录；本轮增加阶段 3 的多房间 Worker、EnTT 权威存储和受限 Lua 技能编排。见 [核心服务构建与切换](NATIVE_CPP_RUNBOOK.md)、[房间交接](ROOMS_LUA_ECS.md)及 [验证记录](VALIDATION.md)。房间候选镜像 cpp-room-91f4800c8a13 已通过完整 CI 并发布，未切换 VPS；Protobuf 与安全 KCP 仍未实现。**
 
 目标采用 C++ 游戏服务、Lua 玩法、组件化房间状态和 Protobuf 协议。原生 Unity 可增加 KCP 入口，WebGL 保留 WSS。现有账号、角色、数据库、四个 WSS 玩法入口及长期资产继续兼容。参考目标是这种技术分工，不以社区逆向表格作为某款商业游戏完整实现的证明。
 
@@ -123,7 +123,7 @@ Redis 用于可重建的索引和缓存，房间实时状态仍在 Worker 内存
 | 0 技术路线 | 当前方案、模块边界、兼容与验证清单 | 与现有代码和用户选择一致；已完成 |
 | 1 C++ 玩家网关 | 已实现，替换自研 Go Bridge/Gateway，保留旧后端兼容 | 四种旧 WSS profile、Origin/TLS、帧限制、登录、移动、技能、状态、断线和旧会话隔离；历史证据见验证记录 |
 | 2 C++ 账号与业务后台 | 已实现，替换 Auth、角色/迁移/奖励/存档，保持旧库 | 原密码/长期 token、新票据轮换、重启身份一致、无 DELETE 权限、迁移故障恢复、幂等奖励和数据库锁丢失；已有 cpp-core 历史镜像 |
-| 3 房间与 ECS Lua | 本轮源码已实现：多房间、EnTT 存储、受限 Lua 弹道/墙体计划及目录/回收 | 隔离、权限、预算、版本固定、存档确认、重连与旧协议回归；当前证据见验证记录，新镜像待统一 CI 发布，VPS 未切换 |
+| 3 房间与 ECS Lua | 已实现并发布候选：多房间、EnTT 存储、受限 Lua 弹道/墙体计划及目录/回收 | 隔离、权限、预算、版本固定、存档确认、重连与旧协议回归通过；容器及匿名拉取通过，VPS 未切换 |
 | 4 Protobuf 与原生 KCP | 新二进制协议、C# schema、受保护的 KCP 接入 | 新旧协议行为一致、授权和重放检查、丢包/乱序/限速测试、WebGL WSS 保留 |
 | 5 运维与规模化 | 已有 Python 房间 status/reload/drain；指标、自动调度与 Redis 待实现 | 可观测、可排空旧对局后发布、数据核对、缓存故障及回退演练 |
 
@@ -157,6 +157,6 @@ Lua 的自定义内存分配器、受保护调用和指令 Hook 已由官方 C A
 
 上线前完成一致数据库备份，核对账号、身份哈希、金币、快照及未决迁移。切换 Auth/Backend 写入者时先停止旧写入者，再使 C++ 获取相同数据库锁；不会让新旧进程同时写库。回退代码或镜像不等于恢复旧数据库，不能覆盖切换后新增的数据。
 
-房间版 game 采用第三层 `native-room-game.override.yaml`，叠加原 game 与 C++ core 覆盖层，使用另行发布且验证过的 `MMO_ROOM_IMAGE_TAG`；Auth 和其他五个 Scene 的镜像独立保留。房间目录与恢复信息新增持久结构，旧账号、token、金币和快照保留。回退至不支持房间的 Backend 前，先停止新组房并重复执行 `scripts/room_admin.py drain`，确认动态归属及未决迁移为零；旧 Backend 无法理解 `room-…` 路由。完整操作见 [运行手册](NATIVE_CPP_RUNBOOK.md)。
+房间版 game 采用第三层 `native-room-game.override.yaml`，叠加原 game 与 C++ core 覆盖层，使用另行发布且验证过的 `MMO_ROOM_IMAGE_TAG`；Auth 和其他五个 Scene 的镜像独立保留。新增 `rooms_directory`、`room_returns`，恢复意图复用原迁移日志，旧账号、token、金币和快照保留。回退至不支持房间的 Backend 前，先停止新组房并重复执行 `scripts/room_admin.py drain`，确认动态归属及未决迁移为零；旧 Backend 无法理解 `room-…` 路由。完整操作见 [运行手册](NATIVE_CPP_RUNBOOK.md)。
 
 最终完成需要：玩家网关、账号、角色业务及战斗实际由 C++ 承担；Lua 玩法预算及版本机制可用；旧账号与四个 WSS 入口兼容；新协议与原生传输通过测试；Go 仅保留运维工具。当前源码覆盖核心服务、ECS、多房间及首批 Lua 技能计划，提供隔离验证和部署/回退入口；本轮 CI 发布、现网切换、Protobuf/KCP 与规模化分别验收，不宣布全量迁移或性能提升。

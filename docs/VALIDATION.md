@@ -18,7 +18,9 @@
 - 独立 MySQL 8.0.46 通过全部跨语言接管与 Backend 不变量，包括新增房间表和恢复测试。GameService 与 Auth 均使用无 DELETE 的受限测试账号；角色、旧 token、100 金币和战斗快照保持，原命名锁与固定连接失联停止写入不变。没有连接真实业务库。
 - 实际离线合并四份部署组合：新第三层只切核心镜像与 scene-skills Worker，保留 Auth、其他五个 Scene、原数据卷、TLS 和端口。测试工具补齐 WebSocket continuation 解析，能读取超过单帧大小的真实房间视图。
 
-镜像的 Release 构建、普通用户容器/新卷和匿名拉取由独立 Linux CI 验证，发布证据随后记录。上述进程验证不等于 VPS 切换、真实 Unity 画面、全国网络或容量验收。Lua 首版只编排已注册弹道/墙体的生成计划；Protobuf、安全 KCP、Redis/集群及完整对局无损恢复尚未实现。
+[完整 Linux CI 43419970567](https://github.com/dravenlove/mmo-server/actions/runs/43419970567) 对源码 **`91f4800c8a13d0be3a08e262238334f54869467c`** 全部通过：上述回归、Release 镜像、UID/GID 10001 普通用户与新 SQLite 卷、真实双账号组房/准备/权限/Lua 弹道/离开/结束/原 token 重登录，以及匿名 Docker 拉取。发布镜像 **`ghcr.io/dravenlove/mmo-server/backend:cpp-room-91f4800c8a13`**，digest **`sha256:7dcf76eb3e2f3810d9e7dc4c28331a069fbb7a12321a3f545c2161e54cf4c221`**。Windows 再以匿名 registry token 核对 manifest/config、摘要、linux/amd64、普通用户和相同 revision；压缩层合计 38,847,974 字节。旧 Go 与 cpp-core 标签未覆盖；后续纯文档提交不改变此镜像源码 revision。
+
+上述验证不等于 VPS 切换、真实 Unity 画面、全国网络或容量验收。Lua 首版只编排已注册弹道/墙体的生成计划；Protobuf、安全 KCP、Redis/集群及完整对局无损恢复尚未实现。
 
 ## 2026-11-13：C++ 核心服务迁移（隔离验证，未切现网）
 

@@ -1,6 +1,8 @@
 # C++ 核心服务、Lua / ECS 房间构建与切换
 
-日期：2026-11-13。当前源码实现 C++ Gateway、AccountService、GameService，以及复用 Scene 算法的多房间 Worker、EnTT 权威存储和受限 Lua 技能编排。接口、生命周期及版本约束见 [房间交接](ROOMS_LUA_ECS.md)。旧 Go 代码保留为回归对照与回退材料。**本轮房间镜像尚待统一 CI 验证和发布，未切换两台 VPS；源码、镜像与实际运行 revision 必须分别核对。**
+日期：2026-11-13。当前源码实现 C++ Gateway、AccountService、GameService，以及复用 Scene 算法的多房间 Worker、EnTT 权威存储和受限 Lua 技能编排。接口、生命周期及版本约束见 [房间交接](ROOMS_LUA_ECS.md)。旧 Go 代码保留为回归对照与回退材料。**房间候选镜像已通过完整 CI 并发布，尚未切换两台 VPS；源码、镜像与实际运行 revision 必须分别核对。**
+
+本轮已验证镜像：`ghcr.io/dravenlove/mmo-server/backend:cpp-room-91f4800c8a13`；源码 `91f4800c8a13d0be3a08e262238334f54869467c`，digest `sha256:7dcf76eb3e2f3810d9e7dc4c28331a069fbb7a12321a3f545c2161e54cf4c221`。[Linux CI 43419970567](https://github.com/dravenlove/mmo-server/actions/runs/43419970567) 包含双账号普通用户容器验收、新卷及匿名拉取；Windows 另作匿名 manifest/config 核对。完整范围见 [验证记录](VALIDATION.md)。
 
 阶段 2 的历史 Linux amd64 候选镜像为 `ghcr.io/dravenlove/mmo-server/backend:cpp-core-20b17dbaf793`。源码 revision 为 `20b17dbaf7937cf935fb1dac130ed3691dd90af2`，当次 digest 为 `sha256:3bfea5e02734378867fbcf5e80c25b170f361f2245b6909745fec405efd62915`。[Linux CI 43407338371](https://github.com/dravenlove/mmo-server/actions/runs/43407338371) 已通过当时的构建、完整回归、普通用户容器/新卷联调和匿名拉取；另从 Windows 客户机匿名读取 manifest/config，确认同一 revision 与平台。**此镜像没有本轮 native-worker、Lua 和 EnTT 实现，不能用于更新后的房间 Compose。**
 
@@ -34,7 +36,7 @@ flowchart LR
 | `native-worker` | `native/room/`、`scene/src/ecs_storage.hpp` | 默认兼容 Scene 和多房间 EnTT 权威状态 |
 | `native-script`（库） | `native/script/`、`scripts/gameplay/` | 预算 Lua 5.4 VM、可信技能计划与版本归档 |
 
-发布复用既有公开 `backend` 镜像包，C++ 程序放在同一镜像，由 Compose `entrypoint` 选择。阶段 2 使用 `cpp-core-…`，当前工作流的房间版默认命名为 `cpp-room-<源码提交前12位>`；后者此时只是命名规则，实际可用标签和 digest 须等待统一 CI 发布并记录，见 [验证记录](VALIDATION.md)。原 Go Backend 标签不变。核心覆盖层可用 `MMO_NATIVE_IMAGE_NAME` 改包名，房间第三层固定使用原前缀的 `backend` 包。本机 Docker 演示使用镜像内 Worker；生产只替换 scene-skills，其他五个 Scene 标签独立保留。Go 仍可用于诊断 CLI、回归夹具和运维。
+发布复用既有公开 `backend` 镜像包，C++ 程序放在同一镜像，由 Compose `entrypoint` 选择。阶段 2 使用 `cpp-core-…`，房间版默认命名为 `cpp-room-<源码提交前12位>`，本轮实际标签见上。原 Go Backend 标签不变。核心覆盖层可用 `MMO_NATIVE_IMAGE_NAME` 改包名，房间第三层固定使用原前缀的 `backend` 包。本机 Docker 演示使用镜像内 Worker；生产只替换 scene-skills，其他五个 Scene 标签独立保留。Go 仍可用于诊断 CLI、回归夹具和运维。
 
 ## 构建与验证
 
@@ -75,7 +77,22 @@ curl --fail http://127.0.0.1:18080/readyz
 
 测试 WebSocket：`ws://127.0.0.1:17001/ws`；TCP：`127.0.0.1:17000`。这是回环地址上的独立 skill_lab 默认场景、可选动态房间与两个 SQLite 测试卷，不使用 VPS 原账号。scene 服务现运行 native-worker，Backend 自动配置内部 `ROOM_WORKER_URL`。HTTPS 网页不能连接明文 ws；真实 HTTPS/WebGL 验收仍经可信 TLS。停止使用 `down` 即可，不默认删除测试卷。
 
-当前房间源码先使用上面的本机构建流程。待本轮 CI 发布后，才可在 `deploy/native-local.env` 设置 `MMO_IMAGE_PREFIX=ghcr.io/dravenlove/mmo-server`、`MMO_NATIVE_IMAGE_NAME=backend`、`MMO_NATIVE_IMAGE_TAG=<已验证的 cpp-room 标签>`，再用该 Compose `pull` 与 `up -d --no-build --pull never --wait` 省去构建。这里本机变量仍叫 `MMO_NATIVE_IMAGE_TAG`，生产房间第三层变量才是 `MMO_ROOM_IMAGE_TAG`。四个本机服务共用镜像；不要填历史 cpp-core 标签，也不要连接真实业务库试验。
+可直接使用已验证镜像省去构建。在初始化后的 `deploy/native-local.env` 设置：
+
+```dotenv
+MMO_IMAGE_PREFIX=ghcr.io/dravenlove/mmo-server
+MMO_NATIVE_IMAGE_NAME=backend
+MMO_NATIVE_IMAGE_TAG=cpp-room-91f4800c8a13
+```
+
+保留初始化生成的密钥与实际 Origin，再运行：
+
+```bash
+docker compose --env-file deploy/native-local.env -f deploy/native-local.compose.yaml pull
+docker compose --env-file deploy/native-local.env -f deploy/native-local.compose.yaml up -d --no-build --pull never --wait
+```
+
+这里本机变量仍叫 `MMO_NATIVE_IMAGE_TAG`，生产房间第三层变量才是 `MMO_ROOM_IMAGE_TAG`。四个本机服务共用镜像；不要填历史 cpp-core 标签，也不要连接真实业务库试验。
 
 ## 两台 VPS 核心服务切换规则（阶段 2）
 
@@ -113,7 +130,7 @@ MySQL 数据库名目前要求 ASCII，避免跨语言大小写规范化导致�
 
 ## game 的房间覆盖层（本轮新增，尚未上线）
 
-前提是统一 CI 成功发布房间镜像，核对 revision、Linux amd64 平台、digest 与匿名拉取后，才在原 `deploy/game-host.env` 追加 `MMO_ROOM_IMAGE_TAG=<已验证标签>`。此处不提供未经发布的具体标签。保留已有 `MMO_NATIVE_IMAGE_TAG` 供第二层及独立 Auth 使用，保持实际数据库地址、密码、INTERNAL_TOKEN、旧 Origin、数据卷和入口配置。
+本轮房间镜像已验证发布，在原 `deploy/game-host.env` 追加 `MMO_ROOM_IMAGE_TAG=cpp-room-91f4800c8a13`。保留已有 `MMO_NATIVE_IMAGE_TAG` 供第二层及独立 Auth 使用；首次使用 C++ 覆盖层时，game env 也必须设置 `MMO_NATIVE_IMAGE_TAG`，可以与新的房间标签相同，因为 Compose 会先展开第二层的必填变量再合并。此操作不修改 auth 主机的私有 env。保持实际数据库地址、密码、INTERNAL_TOKEN、旧 Origin、数据卷和入口配置。
 
 第三层只更换 game 的 Backend、五个 Gateway 与 scene-skills。Auth 不在该文件中，其他五个 Scene 不换标签；旧客户端仍可访问原默认场景。配置校验与拉取可以先做，运行切换仍按上一节维护窗口、单写入者及备份顺序执行：
 
@@ -145,4 +162,4 @@ sudo python3 scripts/room_admin.py drain --env-file deploy/game-host.env
 
 不涉及动态房间的核心服务回退，先停止 C++ Gateway，等待最终存档，再停 C++ Backend。Auth 回退时单独停 C++ Auth 后再启动旧 Auth。使用原 Compose 文件及此前记录的原标签启动旧服务，最后按实际入口恢复原四个 bridge。不能让新旧业务写入者并行，也不能用 `down -v`、`prune` 或旧 SQL 备份覆盖切换后的新数据。
 
-旧账号、角色、资产和战斗存档结构继续兼容；房间版增加房间目录、返回信息与恢复意图，不需要重注册、批量改密码或清空角色，也不增加 DELETE 权限要求。排空后旧代码可忽略新增房间元数据，回退不删除这些表。若数据核对或恢复失败，保持入口关闭，读取具体错误后处理；不要把“健康检查 200”替代业务和数据验收。
+旧账号、角色、资产和战斗存档结构继续兼容；房间版新增 `rooms_directory`、`room_returns` 两张表，恢复意图复用原迁移日志，不需要重注册、批量改密码或清空角色，也不增加 DELETE 权限要求。排空后旧代码可忽略新增房间元数据，回退不删除这些表。若数据核对或恢复失败，保持入口关闭，读取具体错误后处理；不要把“健康检查 200”替代业务和数据验收。
