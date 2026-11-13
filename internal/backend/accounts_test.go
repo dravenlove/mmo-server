@@ -1,12 +1,91 @@
 package backend
 
 import (
+	"context"
+	"database/sql"
+	"github.com/go-sql-driver/mysql"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"mmo/internal/authsvc"
 )
+
+func TestPasswordAuthWithMinimalMySQLPermissions(t *testing.T) {
+	if os.Getenv("MMO_TEST_MYSQL_HOST") == "" {
+		t.Skip("requires isolated MySQL")
+	}
+	f := newFixture(t)
+	if f.cfg.DBDriver != "mysql" {
+		t.Fatal("expected isolated MySQL")
+	}
+	suffix, err := randomHex(6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	username := "auth_test_" + suffix
+	password, err := randomHex(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := "'" + username + "'@'%'"
+	if _, err = f.s.db.ExecContext(context.Background(), "CREATE USER "+account+" IDENTIFIED BY '"+password+"'"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := f.s.db.ExecContext(context.Background(), "DROP USER "+account); err != nil {
+			t.Error(err)
+		}
+	})
+	if !strings.HasPrefix(f.cfg.MySQL.Database, "mmo_test_") {
+		t.Fatal("not an isolated test database")
+	}
+	if _, err = f.s.db.ExecContext(context.Background(), "GRANT SELECT,INSERT,UPDATE,CREATE,INDEX ON `"+f.cfg.MySQL.Database+"`.* TO "+account); err != nil {
+		t.Fatal(err)
+	}
+	m := f.cfg.MySQL
+	m.User = username
+	m.Password = password
+	identity, err := authsvc.New(authsvc.Config{Token: testToken, Driver: "mysql", Host: m.Host, Port: m.Port, User: m.User, Password: m.Password, Database: m.Database, TLS: m.TLS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer identity.Close()
+	cfg, err := mysqlConfig(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector, err := mysql.NewConnector(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited := sql.OpenDB(connector)
+	defer limited.Close()
+	if _, err = limited.Exec("DELETE FROM auth_login_tokens WHERE 1=0"); err == nil {
+		t.Fatal("test account unexpectedly has DELETE permission")
+	}
+	upstream := httptest.NewServer(identity.Handler())
+	defer upstream.Close()
+	f.cfg.AuthURL = upstream.URL
+	f.restart(t)
+	var ticket struct {
+		Token  string `json:"token"`
+		RoleID string `json:"role_id"`
+	}
+	wantPost(t, f.s, "account_register", map[string]string{"name": "LimitedPasswordUser", "password": "password-test-123"}, 200, &ticket)
+	first := ticket.Token
+	wantPost(t, f.s, "login", map[string]string{"token": first}, 200, nil)
+	for i := 0; i < 5; i++ {
+		wantPost(t, f.s, "account_login", map[string]string{"name": "LimitedPasswordUser", "password": "password-test-123"}, 200, &ticket)
+	}
+	wantPost(t, f.s, "login", map[string]string{"token": first}, 401, nil)
+	wantPost(t, f.s, "login", map[string]string{"token": ticket.Token}, 200, nil)
+	var count int
+	if err = f.s.db.QueryRow("SELECT COUNT(*) FROM auth_login_tokens WHERE role_id=?", ticket.RoleID).Scan(&count); err != nil || count != 5 {
+		t.Fatal("ticket records not bounded")
+	}
+}
 
 func TestPasswordLoginPreservesRoleAndAuthRestartImport(t *testing.T) {
 	f := newFixture(t)

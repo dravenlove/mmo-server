@@ -27,6 +27,8 @@ sequenceDiagram
 
 打开 WSS 不创建账号。先按用户选择执行注册或账号登录，收到 token 后再发送原 `login`。`account_*` 仅允许在连接尚未进入游戏时调用；已进入游戏时需先关闭连接、重新建立 WSS。
 
+`ping.data.account_protocol` 为 `account-password-v1`，表示网关支持这些消息；Auth 是否可用仍以真实注册或登录结果为准。
+
 ## 注册与登录
 
 新账号注册：
@@ -79,15 +81,25 @@ sequenceDiagram
 - 每账号最多保留 5 张有效新票据，签发第 6 张时淘汰最早票据；原长期 token 不变。
 - 过期/淘汰票据不能用于新的 `login`，不会主动踢掉已进入场景的会话。退出关闭 WSS，按原流程保存权威状态。本版不提供主动撤销票据。
 - 注册、密码登录、绑定共享每分钟 60 次；同账号名每分钟 6 次，绑定按提交 token 的哈希计数。最多同时进行 2 个密码运算，超出直接 429，不无限排队。固定窗口限流在 Auth 重启时重置，只适合当前小规模联调。
-- `status:400` 格式无效；`401` 凭据错误/过期；`409` 账号名或密码绑定已存在；`429` 请求太多或密码运算繁忙；`503` Auth/数据库暂不可用。客户端按 status 处理账号失败，不依赖错误文案；并非所有旧游戏错误都带 status。
+- `status:400` 格式无效；`401` 凭据错误/过期；`409` 账号名或密码绑定已存在；`429` 请求太多或密码运算繁忙；`503` Auth/数据库暂不可用。客户端以 `ok` 判断成功，有 status 时用它分类，不依赖错误文案。网关本地状态拒绝（如已进入游戏又请求账号登录）及部分旧游戏错误可能只有 error。
 - 按 `id` 匹配回执并处理穿插的 `state`。客户端不保存密码；token 优先放内存或平台安全存储，不打印完整回执。
 
 ## 数据与部署
 
 Auth 继续运行在鉴权后台主机；Game Backend 经既有加密链路访问它。内部 `/v1/account_register`、`/v1/account_login`、`/v1/account_bind` 必须带 `X-Internal-Token`，不直接暴露公网。
 
-仅新增 `auth_passwords`、`auth_login_tokens` 两表。原 `auth_accounts`、`roles`、`combat_snapshots` 和长期 token 不变。新密码账号分配一份不下发的稳定兼容哈希，角色初始化用同一哈希，防止临时 token 轮换导致 Auth 重启导入冲突。账号、密码及首张票据在一个事务注册，MySQL 使用 InnoDB。
+仅新增 `auth_passwords`、`auth_login_tokens` 两表。原 `auth_accounts`、`roles`、`combat_snapshots` 和长期 token 不变。新密码账号分配一份不下发的稳定兼容哈希，角色初始化用同一哈希，防止临时 token 轮换导致 Auth 重启导入冲突。账号、密码及首张票据在一个事务注册，MySQL 使用 InnoDB。每账号最多五条票据记录，循环更新最早记录，不需要 DELETE 权限。
 
-更新 Auth、Game Backend、五个 Gateway；C++ Scene 和 WSS bridge 无需更新。游戏主机设置 `MMO_BACKEND_IMAGE_TAG`、`MMO_GATEWAY_IMAGE_TAG` 为新标签，保留 `MMO_IMAGE_TAG`、`MMO_SKILL_LAB_IMAGE_TAG`，避免重启场景。鉴权主机的 `MMO_IMAGE_TAG` 更新为同一新标签。先备份数据库和配置，再依次更新 Auth、Backend、Gateway；核对旧身份、余额、快照和未完成迁移。
+首次接入更新 Auth、Game Backend、五个 Gateway；C++ Scene 和 WSS bridge 无需更新。当前发布组合如下：
+
+| 主机 / 配置 | 标签 |
+| --- | --- |
+| 游戏主机 `MMO_BACKEND_IMAGE_TAG` | `account-20261113-v1` |
+| 游戏主机 `MMO_GATEWAY_IMAGE_TAG` | `account-20261113-v1` |
+| 鉴权主机 `MMO_IMAGE_TAG` | `account-auth-20261113-v2` |
+
+保留游戏主机 `MMO_IMAGE_TAG`、`MMO_SKILL_LAB_IMAGE_TAG`，避免重启场景。Auth v2 修正无 DELETE 权限时的票据写入：首版 Auth v1 在这种部署下注册会事务回滚并返回 503，不能作为最终鉴权版本。该修正无需更新已经运行 v1 账号协议的 Gateway/Backend。
+
+先备份数据库和配置，再依次更新 Auth、Backend、Gateway，核对旧身份、余额、快照和未完成迁移。`.github/workflows/publish-auth.yaml` 可单独发布鉴权补丁，包含 MySQL 无 DELETE 权限的真实用例，避免为鉴权改动重启游戏场景。
 
 回退旧镜像时新密码账号和票据暂不可用，新增表保留；不能用旧数据库覆盖上线后的数据。完整拓扑见 [游戏与鉴权部署](GAME_AUTH_DEPLOYMENT.md)，玩法见 [参数化技能协议](SKILL_LAB_HANDOFF.md)。本版不含邮箱、短信、改密找回、多角色和生产风控。

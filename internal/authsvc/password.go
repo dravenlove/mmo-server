@@ -269,10 +269,7 @@ func issueAccountTicket(ctx context.Context, tx *sql.Tx, id, name string) (accou
 	if err != nil {
 		return ticket, err
 	}
-	if _, err = tx.ExecContext(ctx, "DELETE FROM auth_login_tokens WHERE expires_ms<=?", now); err != nil {
-		return ticket, err
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT token_hash FROM auth_login_tokens WHERE role_id=? ORDER BY created_ms DESC,token_hash DESC", id)
+	rows, err := tx.QueryContext(ctx, "SELECT token_hash FROM auth_login_tokens WHERE role_id=? ORDER BY created_ms ASC,token_hash ASC", id)
 	if err != nil {
 		return ticket, err
 	}
@@ -290,10 +287,11 @@ func issueAccountTicket(ctx context.Context, tx *sql.Tx, id, name string) (accou
 	if err != nil {
 		return ticket, err
 	}
-	for i := accountTokenLimit - 1; i < len(older); i++ {
-		if _, err = tx.ExecContext(ctx, "DELETE FROM auth_login_tokens WHERE token_hash=?", older[i]); err != nil {
-			return ticket, err
-		}
+	if len(older) >= accountTokenLimit {
+		// 每账号固定最多五条记录，复用最早记录，兼容没有 DELETE 权限的部署账号。
+		// 主键和时间一并替换；旧票据立即失效，新票据仍只有哈希落库。
+		_, err = tx.ExecContext(ctx, "UPDATE auth_login_tokens SET token_hash=?,created_ms=?,expires_ms=? WHERE token_hash=? AND role_id=?", hash(ticket.Token), now, ticket.ExpiresAt, older[0], id)
+		return ticket, err
 	}
 	_, err = tx.ExecContext(ctx, "INSERT INTO auth_login_tokens(token_hash,role_id,created_ms,expires_ms) VALUES(?,?,?,?)", hash(ticket.Token), id, now, ticket.ExpiresAt)
 	return ticket, err
