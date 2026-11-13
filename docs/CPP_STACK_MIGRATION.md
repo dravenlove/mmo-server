@@ -1,6 +1,6 @@
 # C++ 游戏服务技术栈迁移方案
 
-日期：2026-11-13，Asia/Shanghai。用户已选择：玩家网关也迁至 C++，Go 主要用于运维工具。**技术路线已确定，本文阶段 0 完成；C++ 新网关、账号后台、ECS、Lua、Protobuf 与 KCP 迁移尚未实现，现网继续使用原有已验证服务。**
+日期：2026-11-13，Asia/Shanghai。用户已选择：玩家网关也迁至 C++，Go 主要用于运维工具。**阶段 1 / 2 的 C++ Gateway、AccountService、GameService 首版代码已实现，见 [核心服务构建与切换](NATIVE_CPP_RUNBOOK.md) 及 [验证记录](VALIDATION.md)。ECS、Lua、Protobuf 与安全 KCP 尚未实现；现网继续使用原有已验证服务，不能把源码完成写成全量上线。**
 
 目标采用 C++ 游戏服务、Lua 玩法、组件化房间状态和 Protobuf 协议。原生 Unity 可增加 KCP 入口，WebGL 保留 WSS。现有账号、角色、数据库、四个 WSS 玩法入口及长期资产继续兼容。参考目标是这种技术分工，不以社区逆向表格作为某款商业游戏完整实现的证明。
 
@@ -116,7 +116,7 @@ Redis 用于可重建的索引和缓存，房间实时状态仍在 Worker 内存
 
 | 阶段 | 交付内容 | 必须通过 |
 | --- | --- | --- |
-| 0 技术路线 | 当前方案、模块边界、兼容与验证清单 | 与现有代码和用户选择一致；本次完成 |
+| 0 技术路线 | 当前方案、模块边界、兼容与验证清单 | 与现有代码和用户选择一致；已完成 |
 | 1 C++ 玩家网关 | 替换自研 Go Bridge/Gateway，旧 Go Auth/Backend 暂时兼容 | 四种旧 WSS profile、Origin/TLS、帧限制、登录、移动、技能、状态、断线和旧会话隔离 |
 | 2 C++ 账号与业务后台 | 替换 Auth、角色/迁移/奖励/存档，保持旧库 | 原密码/长期 token、新票据轮换、重启身份一致、无 DELETE 权限、迁移故障恢复、幂等奖励和数据库锁丢失 |
 | 3 房间与 ECS Lua | 独立 RoomInstance，移植旧规则后增加 Lua 编排 | 双房间隔离、旧技能等价、脚本超限/失败无部分提交、版本固定、房间结束回收和重连 |
@@ -141,7 +141,7 @@ Redis 用于可重建的索引和缓存，房间实时状态仍在 Worker 内存
 | 旧 JSON 协议文档 | 新 `protocol/native/v1/` schema 与旧 JSON 适配规范 |
 | `.github/workflows/`、`scripts/` | C++ 镜像构建、回归、探针和 Go/Python 运维工具 |
 
-这些目录是规划位置，尚未据此创建可运行的新服务。网络候选为 [Boost.Asio/Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/index.html)，组件注册表候选为 [EnTT](https://github.com/skypjack/entt)，Lua 使用官方 C API。具体依赖固定版本、许可证和校验和后再加入构建；不在构建中拉取漂移的 master。现有 C++17 场景可以继续编译；新内核是否采用 C++20 在第一阶段结合 Linux/GCC 与 Windows 工具链验证后固定。
+`native/gateway/`、`native/account/`、`native/game_service/`、`native/persistence/` 现已包含可运行 C++17 服务与独立回归；会话 actor 暂在 Gateway 模块内。网络使用 [Boost.Asio/Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/index.html)，Linux 依赖由 Ubuntu 24.04 镜像安装，源码依赖不拉取漂移 master。房间/ECS/Lua/新协议目录仍是后续规划，组件注册表候选为 [EnTT](https://github.com/skypjack/entt)，Lua 候选为官方 C API；没有将候选库放进仓库后就声称已经接入。现有场景和新核心目前均保持 C++17。
 
 Lua 的内存分配器、受保护调用与指令 Hook 可由官方 C API 提供，宿主仍需补充完整预算和能力限制。[Lua API](https://www.lua.org/source/5.4/lua.h.html)
 
@@ -153,4 +153,4 @@ Lua 的内存分配器、受保护调用与指令 Hook 可由官方 C API 提供
 
 上线前完成一致数据库备份，核对账号、身份哈希、金币、快照及未决迁移。切换 Auth/Backend 写入者时先停止旧写入者，再使 C++ 获取相同数据库锁；不会让新旧进程同时写库。回退代码或镜像不等于恢复旧数据库，不能覆盖切换后新增的数据。
 
-最终完成需要：玩家网关、账号、角色业务及战斗实际由 C++ 承担；Lua 玩法预算及版本机制可用；旧账号与四个 WSS 入口兼容；新协议与原生传输通过测试；Go 仅保留运维工具。当前仅完成阶段 0，不宣布全量迁移或性能提升。
+最终完成需要：玩家网关、账号、角色业务及战斗实际由 C++ 承担；Lua 玩法预算及版本机制可用；旧账号与四个 WSS 入口兼容；新协议与原生传输通过测试；Go 仅保留运维工具。当前交付核心服务替换实现与隔离验收、部署/回退入口；后续阶段及现网切换分别验收，不宣布全量迁移或性能提升。

@@ -1,0 +1,88 @@
+name: mmo-native-local
+x-common: &common
+  image: ${MMO_IMAGE_PREFIX:-mmo}/native:${MMO_NATIVE_IMAGE_TAG:-dev}
+  build:
+    context: ..
+    dockerfile: Dockerfile.native
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp:size=16m,mode=1777]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  stop_grace_period: 20s
+x-environment: &environment
+  INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set a random internal service token of at least 32 characters}
+
+services:
+  scene:
+    <<: *common
+    entrypoint: [/usr/local/bin/scene-server]
+    environment:
+      <<: *environment
+      SCENE_ID: scene-skills
+      SCENE_MODE: skill_lab
+      SCENE_HOST: 0.0.0.0
+      SCENE_PORT: "9006"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", http://127.0.0.1:9006/healthz]
+      interval: 3s
+      retries: 20
+    init: true
+
+  auth:
+    <<: *common
+    entrypoint: [/usr/local/bin/native-account]
+    environment:
+      <<: *environment
+      AUTH_LISTEN: 0.0.0.0:8082
+      AUTH_DB_DRIVER: sqlite
+      AUTH_DB: /app/data/auth.db
+    volumes: [native-auth:/app/data]
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", http://127.0.0.1:8082/healthz]
+      interval: 3s
+      retries: 20
+
+  backend:
+    <<: *common
+    entrypoint: [/usr/local/bin/native-game-service]
+    environment:
+      <<: *environment
+      BACKEND_LISTEN: 0.0.0.0:8081
+      BACKEND_DB_DRIVER: sqlite
+      BACKEND_DB: /app/data/mmo.db
+      AUTH_URL: http://auth:8082
+      SCENES: scene-skills=http://scene:9006
+    volumes: [native-roles:/app/data]
+    depends_on:
+      auth: {condition: service_healthy}
+      scene: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", http://127.0.0.1:8081/healthz]
+      interval: 3s
+      retries: 20
+
+  gateway:
+    <<: *common
+    entrypoint: [/usr/local/bin/native-gateway]
+    environment:
+      <<: *environment
+      GATEWAY_LISTEN: 0.0.0.0:7000
+      GATEWAY_HEALTH_LISTEN: 0.0.0.0:8080
+      GATEWAY_PROFILE: skill_lab
+      GATEWAY_LOGIN_SCENE: scene-skills
+      BACKEND_URL: http://backend:8081
+      WEBSOCKET_LISTEN: 0.0.0.0:7001
+      WEBSOCKET_ALLOWED_ORIGINS: ${NATIVE_ALLOWED_ORIGINS:-http://localhost:8088}
+    ports: ["127.0.0.1:17000:7000", "127.0.0.1:17001:7001", "127.0.0.1:18080:8080"]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", http://127.0.0.1:8080/readyz]
+      interval: 3s
+      retries: 20
+
+volumes:
+  native-auth:
+  native-roles:

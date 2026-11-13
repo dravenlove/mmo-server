@@ -5,6 +5,20 @@
 
 
 
+## 2026-11-13：C++ 核心服务迁移（隔离验证，未切现网）
+
+新增 `native-gateway`、`native-account`、`native-game-service` 和共享 `native-db`。在本机独立 Ubuntu 24.04 WSL 环境以 GCC 13.3 / C++17 构建；未使用两台 VPS 编译，也未修改 Unity 工程。构建、镜像和切换入口见 [NATIVE_CPP_RUNBOOK.md](NATIVE_CPP_RUNBOOK.md)。
+
+- 7 项原生 CTest 通过：数据库事务/锁、账号 UTF-8/bcrypt 与 HTTP、Backend 不变量、Go 旧库接管、网关协议及真实 TCP/WebSocket 集成。原 Scene 的 9 项 CTest 通过。
+- `test_native_stack.py` 四个 profile 通过：直接连接 C++ WebSocket，账号注册/密码取票据、登录、连续移动、参数化弹道、旧会话失效与 Gateway 重启。此链路中 Gateway/Auth/Backend/Scene 全为 C++。
+- `test_native_legacy.py` 在临时源码副本中复用原验收：15 项基础检查、弹道/PvP/墙体/重连、元素试炼与 prepare/unfreeze/activate 丢响应恢复、客户端参数化技能/版本/双角色观察通过。此处部分旧 Go 用例自建 Go bridge 作为协议对照；新 WebSocket 实现另由上一项及网关 CTest 直接验证。
+- 独立 MySQL **8.0.46** 通过：原 Go `$2a$` 密码和票据由 C++ 接管，C++ `$2b$10$` 哈希由 Go 验证，永久 token 与稳定身份保持，最小权限账号没有 DELETE 也能轮换五票据，双方竞争同一原命名锁。静止 UPDATE 匹配行数、KILL 原固定连接后旧 writer 永久停止写入、新 writer 接锁及完整 Backend MySQL 不变量通过；`localhost` 使用配置的 TCP 端口，不误连默认 Unix socket。
+- Go 创建的完整旧 SQLite 库由 C++ 接管，恢复未决 COMMITTED 迁移，保留角色 ID、永久 token、100 金币、战斗快照及幂等奖励。没有重新注册或重新散列已有身份。
+- 跨模块审查发现并修复三类异步问题：迁移中自动查询冻结源；慢显式 view 覆盖较新自动状态并导致最终存档回退；Elemental 登录已入场但初始 view 失败时漏 disconnect。分别增加竞态与失败响应夹具，包含旧 revision 1 与新 revision 9 交错后最终仍保存 9 的验证。
+- 原 Go 全套 `go test ./...` 通过。三份新增 Compose（本地与 game/auth override）使用合成配置完成离线解析；本机 env 初始化验证不覆盖已有配置。新 Linux 镜像及容器卷权限由 `Native C++ stack` CI 继续验证；发布结果以当次工作流及镜像 revision 为准。
+
+这些是隔离进程/数据库的结果，不是 VPS 更新、真实 Unity 画面、全国网络或容量验收。尚未实现 Lua/ECS 房间、新 Protobuf 和安全 KCP；原生 TCP 直连 TLS 暂需受信任代理，不能清空证书变量降级。现网仍按下面已有运行快照管理。
+
 ## 2026-11-13：账号密码登录部署与公网验收
 
 账号密码协议与游戏侧镜像为 `account-20261113-v1` / `674a5502f18671434f1162afa86a448990517510`，鉴权修正镜像为 `account-auth-20261113-v2` / `4ab0058a478b4c6a66f707b6a66acde7eda0a615`。[完整 Linux 发行 43349657010](https://github.com/dravenlove/mmo-server/actions/runs/43349657010) 通过 Go/race/vet、9 项 CTest、原生技能、SQLite/MySQL Docker、独立鉴权、真实 WebSocket 账号和旧账号绑定验证；[鉴权补丁发行 43352755405](https://github.com/dravenlove/mmo-server/actions/runs/43352755405) 通过 Go/race/vet、MySQL 回归和匿名镜像拉取。

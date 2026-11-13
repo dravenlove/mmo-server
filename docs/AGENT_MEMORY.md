@@ -1,6 +1,6 @@
 # 项目协作记忆与接手入口
 
-维护日期：2026-11-13，Asia/Shanghai。运行快照于当日 10:48 只读复查；整理开始前源码/文档提交为 `9fed850466b31525c4ea4abeaa990c03a8f98174`。此后文档提交不代表容器已经重新构建。
+维护日期：2026-11-13，Asia/Shanghai。运行快照于当日 10:48 只读复查；整理开始前源码/文档提交为 `9fed850466b31525c4ea4abeaa990c03a8f98174`。当日后续在 `codex/cpp-stack-migration` 实现 C++ 核心替换并隔离验证；此后源码/文档提交不代表现网容器已经重新构建或切换。
 
 本文件供接手 agent、客户端负责人、验证及部署负责人共享项目事实。它集中记录架构、代码入口、协议约定、版本、验证和交接流程；具体消息格式以对应协议文档和当前源码为准。仓库当前代码、当次运行检查和用户最新要求优先于历史快照。
 
@@ -16,7 +16,7 @@
 
 ## 2. 已确定的职责和拓扑
 
-2026-11-13 用户进一步选择目标技术栈：**玩家网关和游戏业务迁到 C++，Go 主要用于运维工具**。迁移边界、Lua/ECS、双传输、旧账号与数据库兼容及阶段验收见 [C++ 技术栈迁移方案](CPP_STACK_MIGRATION.md)。目前完成阶段 0 设计，现有 Go 网关/Auth/Backend 仍是运行实现；以下拓扑和版本表描述现有服务，不能因目标已确定就删除旧服务或改写为已迁移。
+2026-11-13 用户进一步选择目标技术栈：**玩家网关和游戏业务迁到 C++，Go 主要用于运维工具**。迁移边界、Lua/ECS、双传输、旧账号与数据库兼容及阶段验收见 [C++ 技术栈迁移方案](CPP_STACK_MIGRATION.md)。核心 C++ Gateway/Auth/GameService 首版实现已在 `native/`，构建与切换见 [NATIVE_CPP_RUNBOOK.md](NATIVE_CPP_RUNBOOK.md)，验证见 [VALIDATION.md](VALIDATION.md)。Lua/ECS/Protobuf/安全 KCP 后续实施；现有 Go 网关/Auth/Backend 仍是已知线上运行实现。以下拓扑和版本表描述现有服务，不能因源码新增 C++ 就删除旧服务或改写为已全量上线。
 
 ```mermaid
 flowchart LR
@@ -221,3 +221,13 @@ Windows 使用 `scripts/build.ps1` 和带 `-C Release` 的 CTest。真实规则/
 完成变更后只更新受影响章节，写日期、事实、实现提交、运行版本和证据。部署未执行就写“源码完成，未部署”；浏览器未测就写“协议通过，浏览器未测”。如果新状态取代旧状态，在版本表更新并把旧证据留在 `VALIDATION.md`，不要把互相矛盾的“当前版本”累加在多个文件。
 
 项目协作记忆属于代码仓库，随任务一起维护；本机长期记忆和凭据目录是另一层资源，必须按各自授权规则处理。其他机器的 agent 需要读取此仓库文档，不能假定自动拥有本机聊天、SSH 或私有产物。
+
+
+## 2026-11-13 后续：C++ 核心替换交接
+
+- `native/CMakeLists.txt` 是独立 Linux C++17 构建入口；`native/gateway/` 原生 TCP/WS + session actor；`native/account/` bcrypt/永久凭据/五票据；`native/game_service/` 角色、存档、claim 与完整迁移恢复；`native/persistence/` 共用安全 SQL、原锁名及失联 fail closed。不是向 Go 服务转发后宣布迁移。
+- 配置、限制、镜像、端口与维护窗口顺序见 [NATIVE_CPP_RUNBOOK.md](NATIVE_CPP_RUNBOOK.md)。`deploy/native-game.override.yaml` / `native-auth.override.yaml` 显式叠加旧部署，默认旧 Compose 不改；`native-local.compose.yaml` 只用独立本机卷。原 C++ Scene、旧账号表和四个 WSS 路径继续兼容。
+- 独立 Ubuntu WSL 完成 7 个新 CTest、9 个旧 Scene CTest、四 profile 直接 C++ WS、完整旧 smoke 与隔离 MySQL 8 跨语言接管回归；精确范围见 [VALIDATION.md](VALIDATION.md)。镜像 CI 与发布必须读取当前工作流和 revision，不能从工作树测试推定镜像已发布。
+- 已修复并新增回归：所有权切换时不能查询冻结源；慢显式 view 不能回退较新状态/最终存档；Elemental 登录部分成功后必须保留精确路由完成断开清理。后续重构异步通道时保留这些用例。
+- 新限制：直连 TCP TLS 暂不在 C++ Gateway 内终止，原证书变量非空时拒绝启动，不能清空变量降级；MySQL 库名要求 ASCII，localhost 强制 TCP 并尊重 MYSQL_PORT。旧 Go Auth 的 SQLite 锁不等价，必须串行停启。
+- 本次尚未切换两台 VPS、未重启旧场景、未改 Unity 客户端。Lua/ECS 房间、Protobuf、安全 KCP、Redis/集群仍属于后续阶段；Go 旧服务代码保留为回归对照和回退材料。

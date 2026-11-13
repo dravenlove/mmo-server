@@ -1,0 +1,8 @@
+add_library(native-db store.cpp)
+target_include_directories(native-db PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_link_libraries(native-db PUBLIC OpenSSL::Crypto SQLite::SQLite3 PkgConfig::MARIADB)
+if(BUILD_TESTING)
+  add_executable(native-db-tests tests/store_tests.cpp)
+  target_link_libraries(native-db-tests PRIVATE native-db)
+  add_test(NAME native-database-invariants COMMAND native-db-tests)
+endif()

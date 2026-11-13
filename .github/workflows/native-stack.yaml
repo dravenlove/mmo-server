@@ -1,0 +1,68 @@
+name: Native C++ stack
+run-name: Native C++ stack ${{ inputs.image_tag || github.sha }}
+on:
+  push:
+    branches: [codex/cpp-stack-migration]
+    paths: [native/**, scene/**, third_party/**, scripts/**, go.mod, go.sum, internal/**, cmd/**, deploy/native-*, Dockerfile.native, .github/workflows/native-stack.yaml]
+  pull_request:
+    paths: [native/**, scripts/test_native_stack.py, Dockerfile.native, .github/workflows/native-stack.yaml]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Optional unique tag to publish after validation
+        type: string
+        required: false
+        default: ''
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: native-stack-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake pkg-config libboost-system-dev libssl-dev libsqlite3-dev libmariadb-dev libcrypt-dev mysql-server-core-8.0 mysql-client-core-8.0
+      - name: Build and verify native services
+        run: |
+          cmake -S native -B build/native-ci -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/native-ci --parallel 2
+          ctest --test-dir build/native-ci --output-on-failure
+          build/native-ci/account/native-account-unit --emit-bcrypt-fixture | go run native/account/tests/go_compat/hash_compat.go
+          cmake -S scene -B build/scene-ci -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/scene-ci --parallel 2
+          ctest --test-dir build/scene-ci --output-on-failure
+          python3 scripts/test_native_stack.py --build build/native-ci --scene build/scene-ci/scene-server
+          python3 scripts/test_native_mysql.py --build build/native-ci
+      - name: Run legacy protocol regressions against C++ replacements
+        run: |
+          python3 scripts/test_native_legacy.py --build build/native-ci --scene build/scene-ci/scene-server
+          go test ./...
+      - name: Build runtime image
+        run: docker build --progress plain -f Dockerfile.native -t mmo/native:ci --label "org.opencontainers.image.revision=$GITHUB_SHA" .
+      - name: Verify runtime image and fresh volumes
+        run: python3 scripts/test_native_image.py --image mmo/native:ci
+      - name: Publish validated image
+        if: github.event_name != 'pull_request'
+        env:
+          REQUESTED_TAG: ${{ inputs.image_tag }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGE_TAG="${REQUESTED_TAG:-cpp-core-${GITHUB_SHA:0:12}}"
+          [[ "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] || exit 2
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/native:$IMAGE_TAG"
+          docker tag mmo/native:ci "$image"
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$image"
+          docker logout ghcr.io
+          anonymous=$(mktemp -d)
+          docker --config "$anonymous" pull "$image"
+          rm -rf -- "$anonymous"
