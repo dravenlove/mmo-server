@@ -7,7 +7,7 @@ x-common: &common
   init: true
   restart: unless-stopped
   read_only: true
-  tmpfs: [/tmp:size=16m,mode=1777]
+  tmpfs: ["/tmp:size=16m,mode=1777"]
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   stop_grace_period: 20s

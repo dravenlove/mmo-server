@@ -40,6 +40,12 @@ def main():
                     assert any(int(p["target"]) == 7001 and int(p["published"]) == port and p["host_ip"] == "127.0.0.1"
                                for p in config["services"][name]["ports"]), name
             print("PASS", role, "native image/entrypoints, no legacy build, preserved scenes/volume/TLS and loopback WS ports", flush=True)
+        local = ["docker", "compose", "--env-file", str(empty_env), "-f", str(root / "deploy/native-local.compose.yaml"), "config", "--format", "json"]
+        config = json.loads(subprocess.run(local, env=environment, capture_output=True, text=True, check=True, timeout=30).stdout)
+        for service in config["services"].values():
+            mounts = service["tmpfs"]
+            assert len(mounts) == 1 and mounts[0].startswith("/tmp:") and "mode=1777" in mounts[0], "tmpfs options split into invalid mount paths"
+        print("PASS native local tmpfs is one absolute mount including its options", flush=True)
 
 
 if __name__ == "__main__":
