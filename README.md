@@ -1,6 +1,8 @@
 # Go + C++ MMO 分布式服务器 MVP
 
-一个可分别部署的服务端原型：Go 网关承接玩家长连接，Go Auth 管理账号，Game Backend 管理角色、场景归属和持久化，两个独立 C++ SceneHost 推进实时移动和 AOI。Linux Docker 是部署目标；同机 Compose 用于演示，多机模板位于 `deploy/`。
+接手与协作入口：[项目协作记忆](docs/AGENT_MEMORY.md)，包含代码定位、协议、运行版本、证据及协作流程；agent 开始工作先读 [AGENTS.md](AGENTS.md)。
+
+一个可分别部署的服务端原型：Go 网关承接玩家长连接，Go Auth 管理账号，Game Backend 管理角色、场景归属和持久化，多个独立 C++ SceneHost 推进实时移动和 AOI。Linux Docker 是部署目标；同机 Compose 用于演示，多机模板位于 `deploy/`。
 
 Unity WebGL 的移动与 AOI 接入见 [服务端交接协议](docs/WEBGL_MOVEMENT_HANDOFF.md)，提供独立无战斗场景和 WSS 入口；当前使用 [IP 地址联调](docs/IP_WSS_DEBUG.md)，保留 TLS 证书校验。原桌面战斗入口继续保留。
 
@@ -20,7 +22,7 @@ Unity WebGL 的移动与 AOI 接入见 [服务端交接协议](docs/WEBGL_MOVEME
 
 | 主机角色 | 运行内容 |
 | --- | --- |
-| `game` | Go Gateway + Game Backend + 两个 C++ 场景，连接既有 MySQL |
+| `game` | 五个 Go Gateway + Game Backend + 六个 C++ 场景，连接既有 MySQL |
 | `auth` | Go Auth，账号注册、凭据验证及旧账号导入 |
 
 原来的 [gateway + scene 分机流程](docs/DEPLOYMENT_TWO_HOSTS.md)保留为旧拓扑参考。角色迁移保留原密钥、数据库、卷和战斗配置；不要同时启动新旧 Game Backend。

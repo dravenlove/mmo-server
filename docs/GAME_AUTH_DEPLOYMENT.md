@@ -36,7 +36,7 @@ flowchart LR
 
 ## 2. 镜像与文件
 
-当前游戏主机镜像：`webgl-20261111-v1`，Linux amd64；鉴权主机可继续使用已部署的 `game-auth-20261111-v1`。当前 Compose 还包含专用 WebGL 移动场景与网关，接入条件和协议见 [WebGL 交接](WEBGL_MOVEMENT_HANDOFF.md)。`backend` 镜像通过 `-role auth` 启动鉴权角色，默认仍启动 Game Backend。原生调试也可构建 `cmd/auth`。
+本拓扑首次发布使用 `webgl-20261111-v1` / `game-auth-20261111-v1`；这些是历史标签。后续增加多个玩法场景和账号密码登录，当前各组件独立版本以 [项目协作记忆](AGENT_MEMORY.md) 和 [账号登录部署](ACCOUNT_LOGIN.md) 为准，不统一回退到早期标签。`backend` 镜像通过 `-role auth` 启动鉴权角色，默认仍启动 Game Backend。原生调试也可构建 `cmd/auth`。
 
 | 主机 | Compose | 私有环境文件 | 项目名 |
 | --- | --- | --- | --- |
