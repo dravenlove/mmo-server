@@ -237,6 +237,11 @@ try:
         if skill_check.returncode: raise AssertionError(skill_check.stdout + skill_check.stderr)
         passed('Client-registered skill definitions, authoritative shared instances, configured PvP and compression')
     if args.external_auth:
+        child_env['MMO_TEST_ACCOUNT_GATEWAY'] = '127.0.0.1:' + str(ports['gateway'])
+        account_check = run(['go', 'test', './internal/wsbridge', '-run', '^TestAccountLoginIntegration$', '-count=1', '-v', '-timeout', '60s'], timeout=75)
+        (work / 'accounts.log').write_text(account_check.stdout + account_check.stderr, encoding='utf-8')
+        if account_check.returncode: raise AssertionError(account_check.stdout + account_check.stderr)
+        passed('Password registration/login and legacy binding through real WebSocket, Gateway, Backend and MySQL Auth')
         compose_ok('stop', 'auth')
         new_peer().request('login', ok=False, token=auth['token'])
         # 包含超过一次 Gateway 会话复核周期，确认在线链路不会继续调用 Auth。

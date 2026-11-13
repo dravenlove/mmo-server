@@ -1,5 +1,7 @@
 # MVP 协议约定
 
+账号密码注册、登录、旧 token 绑定与到期票据见 [账号登录协议](ACCOUNT_LOGIN.md)。新增 `account_*` 不改变原 `login(token)`、角色会话和战斗协议。
+
 > Unity WebGL 的 WSS、移动专用场景、在线 AOI 和公网待备案状态见 [WEBGL_MOVEMENT_HANDOFF.md](WEBGL_MOVEMENT_HANDOFF.md)。本文继续说明完整 TCP 游戏协议。
 
 

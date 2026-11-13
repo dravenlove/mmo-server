@@ -66,6 +66,7 @@ type Request struct {
 	Op                        string          `json:"op"`
 	Name                      string          `json:"name,omitempty"`
 	Token                     string          `json:"token,omitempty"`
+	Password                  string          `json:"password,omitempty"`
 	Seq                       int64           `json:"seq,omitempty"`
 	DX                        float64         `json:"dx,omitempty"`
 	DY                        float64         `json:"dy,omitempty"`
@@ -87,11 +88,12 @@ type Request struct {
 	validationError           string
 }
 type Response struct {
-	ID    string `json:"id,omitempty"`
-	Op    string `json:"op"`
-	OK    bool   `json:"ok"`
-	Data  any    `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
+	ID     string `json:"id,omitempty"`
+	Op     string `json:"op"`
+	OK     bool   `json:"ok"`
+	Data   any    `json:"data,omitempty"`
+	Error  string `json:"error,omitempty"`
+	Status int    `json:"status,omitempty"`
 }
 type Config struct {
 	Listen, HealthListen, BackendURL, Token, CertFile, KeyFile string
@@ -625,34 +627,59 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 				}
 				continue
 			}
-			if s.cfg.Profile == "movement" && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" {
+			isAccount := req.Op == "account_register" || req.Op == "account_login" || req.Op == "account_bind"
+			if s.cfg.Profile == "movement" && !isAccount && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" {
 				if !write(Response{ID: req.ID, Op: req.Op, Error: "operation is not available in movement profile"}) {
 					return
 				}
 				continue
 			}
-			if s.cfg.Profile == "abilities" && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "revive" {
+			if s.cfg.Profile == "abilities" && !isAccount && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "revive" {
 				if !write(Response{ID: req.ID, Op: req.Op, Error: "operation is not available in abilities profile"}) {
 					return
 				}
 				continue
 			}
-			if s.cfg.Profile == "skill_lab" && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "revive" && req.Op != "skill_init" {
+			if s.cfg.Profile == "skill_lab" && !isAccount && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "revive" && req.Op != "skill_init" {
 				if !write(Response{ID: req.ID, Op: req.Op, Error: "operation is not available in skill lab profile"}) {
 					return
 				}
 				continue
 			}
-			if s.cfg.Profile == "elemental" && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "enter_arena" && req.Op != "leave_arena" && req.Op != "restart_battle" {
+			if s.cfg.Profile == "elemental" && !isAccount && req.Op != "register" && req.Op != "login" && req.Op != "view" && req.Op != "ping" && req.Op != "cast" && req.Op != "enter_arena" && req.Op != "leave_arena" && req.Op != "restart_battle" {
 				if !write(Response{ID: req.ID, Op: req.Op, Error: "operation is not available in elemental profile"}) {
 					return
 				}
 				continue
 			}
 			var err error
+			if req.Password != "" && !isAccount {
+				if !write(Response{ID: req.ID, Op: req.Op, Status: 400, Error: "use account_register, account_login or account_bind for passwords"}) {
+					return
+				}
+				continue
+			}
 			switch req.Op {
+			case "account_register", "account_login", "account_bind":
+				if route != nil {
+					err = errors.New("account operations require a connection that has not entered the game")
+					break
+				}
+				if (req.Op == "account_bind" && req.Name != "") || (req.Op != "account_bind" && req.Token != "") {
+					err = &upstreamError{400, "account request contains conflicting credential fields"}
+					break
+				}
+				payload := map[string]any{"password": req.Password}
+				if req.Op == "account_bind" {
+					payload["token"] = req.Token
+				} else {
+					payload["name"] = req.Name
+				}
+				var out map[string]any
+				err = s.call(serviceCtx, s.cfg.BackendURL, "/v1/"+req.Op, payload, &out)
+				resp.Data = out
 			case "ping":
-				data := map[string]any{"unix_ms": time.Now().UnixMilli()}
+				data := map[string]any{"unix_ms": time.Now().UnixMilli(), "account_protocol": "account-password-v1"}
 				if s.cfg.Profile == "movement" {
 					data["protocol_version"] = "webgl-movement-v1"
 				}
@@ -838,6 +865,10 @@ func (s *Server) serveConnWithTicks(ctx context.Context, c net.Conn, ticks <-cha
 				resp.OK = false
 				resp.Data = nil
 				resp.Error = err.Error()
+				var upstream *upstreamError
+				if errors.As(err, &upstream) {
+					resp.Status = upstream.status
+				}
 			}
 			if !write(resp) {
 				return

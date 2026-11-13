@@ -44,7 +44,7 @@ jobs:
         run: |
           go test ./...
           go vet ./...
-          go test -race ./internal/gateway ./internal/wsbridge
+          go test -race ./internal/authsvc ./internal/backend ./internal/gateway ./internal/wsbridge
           cmake -S scene -B build/scene-ci -DCMAKE_BUILD_TYPE=Release
           cmake --build build/scene-ci --parallel 2
           ctest --test-dir build/scene-ci --output-on-failure

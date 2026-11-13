@@ -81,9 +81,17 @@ func (s *Server) callAuth(ctx context.Context, operation string, in, out any) er
 		case 400:
 			return bad("账号请求格式无效")
 		case 401:
+			if strings.HasPrefix(operation, "account_") {
+				return &apiError{401, "账号、密码或原登录凭据无效"}
+			}
 			return &apiError{401, "登录 token 无效"}
 		case 409:
+			if strings.HasPrefix(operation, "account_") {
+				return conflict("账号名或密码绑定已存在")
+			}
 			return conflict("名字已被注册；请使用原 token 登录")
+		case 429:
+			return &apiError{429, "登录请求过于频繁，请稍后重试"}
 		default:
 			return unavailable("登录鉴权服务暂不可用")
 		}
@@ -125,8 +133,9 @@ func (s *Server) identityRequest(ctx context.Context, operation string, raw json
 		return nil, &apiError{401, "登录 token 无效"}
 	}
 	var identity struct {
-		RoleID string `json:"role_id"`
-		Name   string `json:"name"`
+		RoleID          string `json:"role_id"`
+		Name            string `json:"name"`
+		LegacyTokenHash string `json:"legacy_token_hash"`
 	}
 	if err := s.callAuth(ctx, "authenticate", request, &identity); err != nil {
 		return nil, err
@@ -134,13 +143,20 @@ func (s *Server) identityRequest(ctx context.Context, operation string, raw json
 	if !validIdentityHex(identity.RoleID, 32) || !validIdentityName(identity.Name) {
 		return nil, unavailable("鉴权返回无效身份")
 	}
+	legacyHash := tokenHash(request.Token)
+	if identity.LegacyTokenHash != "" {
+		if !validIdentityHex(identity.LegacyTokenHash, 64) {
+			return nil, unavailable("鉴权返回无效身份哈希")
+		}
+		legacyHash = identity.LegacyTokenHash
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	role, err := s.role(ctx, identity.RoleID)
 	var missing *apiError
 	if errors.As(err, &missing) && missing.status == 404 {
 		// token_hash 是旧结构的兼容字段；分离模式不使用它作鉴权决定。
-		_, err = s.db.ExecContext(ctx, `INSERT INTO roles(role_id,name,token_hash,scene_id,owner_epoch,epoch_counter,session_epoch,x,y,coins) VALUES(?,?,?,?,1,1,0,0,0,0)`, identity.RoleID, identity.Name, tokenHash(request.Token), s.config.DefaultScene)
+		_, err = s.db.ExecContext(ctx, `INSERT INTO roles(role_id,name,token_hash,scene_id,owner_epoch,epoch_counter,session_epoch,x,y,coins) VALUES(?,?,?,?,1,1,0,0,0,0)`, identity.RoleID, identity.Name, legacyHash, s.config.DefaultScene)
 		if err != nil {
 			return nil, unavailable("游戏角色初始化失败；请保留凭据稍后重新登录")
 		}

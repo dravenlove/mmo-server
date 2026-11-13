@@ -6,6 +6,8 @@ Unity WebGL 的移动与 AOI 接入见 [服务端交接协议](docs/WEBGL_MOVEME
 
 客户端自定义技能 ID 和完整参数的多人联调，见 [参数化技能协议](docs/SKILL_LAB_HANDOFF.md) 与 [部署步骤](docs/SKILL_LAB_DEPLOYMENT.md)。客户端初始化定义，服务端生成和推进真实弹道/墙体实例；不依赖客户端本地水火雷规则。
 
+简单账号密码注册、登录和旧账号绑定见 [账号登录协议](docs/ACCOUNT_LOGIN.md)。取得限期 token 后沿用原 `login` 进入游戏，保留已有角色及凭据。[协议选择说明](docs/NETWORK_TRANSPORT.md)解释 TCP、UDP、WebSocket、KCP 与当前 WebGL 的关系。
+
 新增 [WebGL 核心战斗 v1 联调协议](docs/WEBGL_COMBAT_HANDOFF.md)：独立 `/combat/ws` 入口、服务端弹道、PvP/PvE 伤害和临时墙体，包含客户端消息示例与双角色验收步骤。[部署说明](docs/COMBAT_V1_DEPLOYMENT.md)。
 
 元素战斗客户端接入见 [元素试炼场交付协议](docs/WEBGL_ELEMENTAL_HANDOFF.md)：`/elemental/ws`、能力声明、个人 13×9 试炼、水火雷反应及真实归属切换。[部署说明](docs/ELEMENTAL_DEPLOYMENT.md)。

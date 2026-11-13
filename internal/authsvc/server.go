@@ -35,15 +35,19 @@ type Config struct {
 type Identity struct {
 	RoleID string `json:"role_id"`
 	Name   string `json:"name"`
+	// 仅在受内部凭据保护的链路上传递，用于兼容旧 roles 的稳定身份哈希。
+	LegacyTokenHash string `json:"legacy_token_hash,omitempty"`
 }
 
 // 账号凭据由 Auth 单独写入；角色、会话、战斗与经济仍由游戏服务管理。
 type Server struct {
-	mu       sync.Mutex
-	pool     *sql.DB
-	conn     *sql.Conn
-	config   Config
-	imported int
+	mu            sync.Mutex
+	pool          *sql.DB
+	conn          *sql.Conn
+	config        Config
+	imported      int
+	passwordSlots chan struct{}
+	loginLimits   accountLimiter
 }
 
 func New(c Config) (*Server, error) {
@@ -110,7 +114,7 @@ func New(c Config) (*Server, error) {
 		pool.Close()
 		return nil, err
 	}
-	s := &Server{pool: pool, conn: conn, config: c}
+	s := &Server{pool: pool, conn: conn, config: c, passwordSlots: make(chan struct{}, 2)}
 	fail := func(e error) (*Server, error) { s.Close(); return nil, e }
 	if c.Driver == "mysql" {
 		// 与 Game Backend 的锁名不同，两个服务只写各自拥有的表。
@@ -145,6 +149,9 @@ func New(c Config) (*Server, error) {
 		}
 	}
 	if err = s.importLegacy(ctx); err != nil {
+		return fail(err)
+	}
+	if err = s.createPasswordTables(ctx); err != nil {
 		return fail(err)
 	}
 	return s, nil
@@ -265,7 +272,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		response(w, 200, map[string]any{"ok": true, "service": "auth"})
 	})
-	for _, operation := range []string{"register", "authenticate", "status"} {
+	for _, operation := range []string{"register", "authenticate", "status", "account_register", "account_login", "account_bind"} {
 		op := operation
 		mux.HandleFunc("/v1/"+op, func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
@@ -283,9 +290,15 @@ func (s *Server) Handler() http.Handler {
 			}
 			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 			defer cancel()
-			s.mu.Lock()
-			data, err := s.execute(ctx, op, body)
-			s.mu.Unlock()
+			var data any
+			if strings.HasPrefix(op, "account_") {
+				// 密码运算不持有数据库锁，健康检查与旧 token 鉴权可独立进行。
+				data, err = s.passwordRequest(ctx, op, body)
+			} else {
+				s.mu.Lock()
+				data, err = s.execute(ctx, op, body)
+				s.mu.Unlock()
+			}
 			if err != nil {
 				var f *failure
 				if errors.As(err, &f) {
@@ -324,12 +337,7 @@ func (s *Server) execute(ctx context.Context, operation string, raw []byte) (any
 		if len(request.Token) != 64 {
 			return nil, &failure{401, "登录token无效"}
 		}
-		var identity Identity
-		err := s.conn.QueryRowContext(ctx, "SELECT role_id,name FROM auth_accounts WHERE token_hash=?", hash(request.Token)).Scan(&identity.RoleID, &identity.Name)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, &failure{401, "登录token无效"}
-		}
-		return identity, err
+		return s.authenticate(ctx, request.Token)
 	}
 	var request struct {
 		Name string `json:"name"`

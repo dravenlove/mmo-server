@@ -5,7 +5,8 @@ go 1.22
 require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gorilla/websocket v1.5.3
-	golang.org/x/sys v0.22.0
+	golang.org/x/crypto v0.33.0
+	golang.org/x/sys v0.30.0
 	modernc.org/sqlite v1.34.5
 )
 

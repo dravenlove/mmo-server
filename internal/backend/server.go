@@ -107,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 	methods := map[string]func(context.Context, json.RawMessage) (any, error){
 		"register": s.register, "login": s.login, "session": s.session,
 		"checkpoint": s.checkpoint, "transfer": s.transfer, "claim": s.claim,
+		"account_register": nil, "account_login": nil, "account_bind": nil,
 	}
 	for name, method := range methods {
 		handler := method
@@ -127,7 +128,9 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			var data any
-			if s.config.AuthURL != "" && (operation == "register" || operation == "login") {
+			if strings.HasPrefix(operation, "account_") {
+				data, err = s.accountRequest(r.Context(), operation, body)
+			} else if s.config.AuthURL != "" && (operation == "register" || operation == "login") {
 				// 跨地域鉴权 I/O 不持有游戏状态锁，不能阻塞在线会话和保存。
 				data, err = s.identityRequest(r.Context(), operation, body)
 			} else {
