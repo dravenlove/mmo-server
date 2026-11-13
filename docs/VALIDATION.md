@@ -5,6 +5,50 @@
 
 
 
+## 2026-11-13：按交接文档进行真实客户端联调
+
+[完整联调报告](INTEGRATION_20261113.md) 区分两个版本：公网仍为 `account-20261113-v1` Gateway/Backend 和 `skill-lab-20261112-v1` Scene；新 Lua/ECS C++ 在本机隔离服务验证，没有替换 VPS 或修改客户端。
+
+- 真实 C# `GatewaySession/AoiWorld` 使用两个已有受控账号，通过可信 WSS、实际 iframe Origin 完成独立技能参数、17/5 伤害、更新到 23、幂等/CAS、墙体移动/弹道阻挡及到期、重登与原身份返回移动；注册请求 0。单发 ack 78.69ms、首份含实例状态 128.57ms，不是浏览器画面时延。
+- 一个既有密码账号在四种公网入口完成取票据、login 和 view，错误密码 401；无新注册，结束返回移动。公网相关容器保持原版本、健康、重启计数 0，Auth 亦健康。
+- 新 C++ `91f4800` 的三账号/双房间/脚本发布/重启恢复脚本重新通过。另导出客户端固定提交 `36681c4`，真实 C# 在新服务临时双账号夹具上通过 7 项：默认和房内参数化弹道/墙体双端解析、房间控制/归属解析、同房重登、缓存边界复现及新 Session 返回大厅。测试脚本的 room 控制胶水不属于现有客户端 UI；本机临时服务/数据库/凭据已清理。
+- 本轮确认了三个客户端接入要求：lobby/finished 暂停移动心跳；离房返回已退休的原大厅 world 需重建 Session；Worker 重建旋转 session 后需重新 login。结束后 owner 路由交错的 409 用相同业务 ID 有界重试。均写入交接文档，未放松服务端围栏。
+
+真实 Unity/WebGL 页面、画面延迟与新增本地元素规则的服务器支持未在本轮完成；没有启动云构建。其他并行客户端改动不计入固定提交的验收。
+
+## 2026-11-13：Lua / ECS / 房间 Worker（隔离验证，未切现网）
+
+在 C++ 核心替换上新增 `native-worker`、`native-script`、EnTT 权威组件存储、GameService 房间目录与新 Gateway 房间命令。设计、客户端增量接口及部署/排空流程见 [ROOMS_LUA_ECS.md](ROOMS_LUA_ECS.md)。
+
+本机独立 Ubuntu 24.04 WSL / GCC 13.3 / Lua 5.4.6 完成：
+
+- 统一 Debug 构建与 **20/20 CTest**：原生数据库/账号/旧库接管、网关竞态、Lua 沙箱预算、ECS 与旧 Scene 算法、Room 生命周期及真实 HTTP。新世界会话旋转、迟到的旧控制请求、旧检查点被拒绝、版本及 SHA 固定、存档后回收、离线排空均有回归。
+- `test_room_stack.py`：三隔离密码账号、两个并行房间、准备/房主权限、客户端参数化弹道、跨房隔离；新脚本只影响新房，Lua deny 不扣 MP/序号或生成半套对象；Worker/Backend/Gateway 重启后保留身份、100 金币、房间路由与归档版本；结束后的活房/空房角色安全回原大厅。
+- `test_native_legacy.py --scene .../native-worker`：原 15 项基础流程、PvP 弹道/墙体、元素个人试炼和迁移丢响应恢复、技能实验室参数/版本/重连通过。兼容默认场景实际换成 Lua/ECS Worker；部分旧 WebSocket 用例仍通过旧 Go bridge 对照，直接 C++ WS 由网关 CTest 和下一项覆盖。
+- 四 profile 直接 C++ WebSocket 账号/移动/失效会话/重启通过；C++ bcrypt 产物由 Go 验证。原 Go `go test ./...` 通过。
+- 独立 MySQL 8.0.46 通过全部跨语言接管与 Backend 不变量，包括新增房间表和恢复测试。GameService 与 Auth 均使用无 DELETE 的受限测试账号；角色、旧 token、100 金币和战斗快照保持，原命名锁与固定连接失联停止写入不变。没有连接真实业务库。
+- 实际离线合并四份部署组合：新第三层只切核心镜像与 scene-skills Worker，保留 Auth、其他五个 Scene、原数据卷、TLS 和端口。测试工具补齐 WebSocket continuation 解析，能读取超过单帧大小的真实房间视图。
+
+[完整 Linux CI 43419970567](https://github.com/dravenlove/mmo-server/actions/runs/43419970567) 对源码 **`91f4800c8a13d0be3a08e262238334f54869467c`** 全部通过：上述回归、Release 镜像、UID/GID 10001 普通用户与新 SQLite 卷、真实双账号组房/准备/权限/Lua 弹道/离开/结束/原 token 重登录，以及匿名 Docker 拉取。发布镜像 **`ghcr.io/dravenlove/mmo-server/backend:cpp-room-91f4800c8a13`**，digest **`sha256:7dcf76eb3e2f3810d9e7dc4c28331a069fbb7a12321a3f545c2161e54cf4c221`**。Windows 再以匿名 registry token 核对 manifest/config、摘要、linux/amd64、普通用户和相同 revision；压缩层合计 38,847,974 字节。旧 Go 与 cpp-core 标签未覆盖；后续纯文档提交不改变此镜像源码 revision。
+
+上述验证不等于 VPS 切换、真实 Unity 画面、全国网络或容量验收。Lua 首版只编排已注册弹道/墙体的生成计划；Protobuf、安全 KCP、Redis/集群及完整对局无损恢复尚未实现。
+
+## 2026-11-13：C++ 核心服务迁移（隔离验证，未切现网）
+
+新增 `native-gateway`、`native-account`、`native-game-service` 和共享 `native-db`。在本机独立 Ubuntu 24.04 WSL 环境以 GCC 13.3 / C++17 构建；未使用两台 VPS 编译，也未修改 Unity 工程。构建、镜像和切换入口见 [NATIVE_CPP_RUNBOOK.md](NATIVE_CPP_RUNBOOK.md)。
+
+- 7 项原生 CTest 通过：数据库事务/锁、账号 UTF-8/bcrypt 与 HTTP、Backend 不变量、Go 旧库接管、网关协议及真实 TCP/WebSocket 集成。原 Scene 的 9 项 CTest 通过。
+- `test_native_stack.py` 四个 profile 通过：直接连接 C++ WebSocket，账号注册/密码取票据、登录、连续移动、参数化弹道、旧会话失效与 Gateway 重启。此链路中 Gateway/Auth/Backend/Scene 全为 C++。
+- `test_native_legacy.py` 在临时源码副本中复用原验收：15 项基础检查、弹道/PvP/墙体/重连、元素试炼与 prepare/unfreeze/activate 丢响应恢复、客户端参数化技能/版本/双角色观察通过。此处部分旧 Go 用例自建 Go bridge 作为协议对照；新 WebSocket 实现另由上一项及网关 CTest 直接验证。
+- 独立 MySQL **8.0.46** 通过：原 Go `$2a$` 密码和票据由 C++ 接管，C++ `$2b$10$` 哈希由 Go 验证，永久 token 与稳定身份保持，最小权限账号没有 DELETE 也能轮换五票据，双方竞争同一原命名锁。静止 UPDATE 匹配行数、KILL 原固定连接后旧 writer 永久停止写入、新 writer 接锁及完整 Backend MySQL 不变量通过；`localhost` 使用配置的 TCP 端口，不误连默认 Unix socket。
+- Go 创建的完整旧 SQLite 库由 C++ 接管，恢复未决 COMMITTED 迁移，保留角色 ID、永久 token、100 金币、战斗快照及幂等奖励。没有重新注册或重新散列已有身份。
+- 跨模块审查发现并修复三类异步问题：迁移中自动查询冻结源；慢显式 view 覆盖较新自动状态并导致最终存档回退；Elemental 登录已入场但初始 view 失败时漏 disconnect。分别增加竞态与失败响应夹具，包含旧 revision 1 与新 revision 9 交错后最终仍保存 9 的验证。
+- 原 Go 全套 `go test ./...` 通过。三份新增 Compose（本地与 game/auth override）使用合成配置完成实际合并检查：新 image/entrypoint、清除旧 Go build、保留原场景/数据卷/TLS、四个回环 WS 端口及完整 tmpfs 选项；本机 env 初始化不覆盖已有配置。另以 UID/GID 10001、清空附加组完成四 profile 原生进程联调。
+
+[完整 Linux CI 43407338371](https://github.com/dravenlove/mmo-server/actions/runs/43407338371) 对源码 `20b17dbaf7937cf935fb1dac130ed3691dd90af2` 全部通过：上述回归、Release 运行镜像、普通用户容器与新 SQLite 卷、真实 C++ WS→GameService→Auth→Scene 的账号/移动/参数化施法，以及匿名 Docker 拉取。已发布 `ghcr.io/dravenlove/mmo-server/backend:cpp-core-20b17dbaf793`，digest `sha256:3bfea5e02734378867fbcf5e80c25b170f361f2245b6909745fec405efd62915`；Windows 客户机再以匿名 registry token 读取 manifest/config，确认 linux/amd64、原生 Gateway 入口及相同 revision。发布复用既有公开 backend 包，使用独立 C++ 标签，旧 Go 标签未覆盖。
+
+这些是阶段 2 的隔离进程/数据库结果，不是 VPS 更新、真实 Unity 画面、全国网络或容量验收。Lua/ECS 房间在上述后续阶段加入；Protobuf 和安全 KCP 尚未实现。原生 TCP 直连 TLS 暂需受信任代理，不能清空证书变量降级。现网仍按下面已有运行快照管理。
+
 ## 2026-11-13：账号密码登录部署与公网验收
 
 账号密码协议与游戏侧镜像为 `account-20261113-v1` / `674a5502f18671434f1162afa86a448990517510`，鉴权修正镜像为 `account-auth-20261113-v2` / `4ab0058a478b4c6a66f707b6a66acde7eda0a615`。[完整 Linux 发行 43349657010](https://github.com/dravenlove/mmo-server/actions/runs/43349657010) 通过 Go/race/vet、9 项 CTest、原生技能、SQLite/MySQL Docker、独立鉴权、真实 WebSocket 账号和旧账号绑定验证；[鉴权补丁发行 43352755405](https://github.com/dravenlove/mmo-server/actions/runs/43352755405) 通过 Go/race/vet、MySQL 回归和匿名镜像拉取。

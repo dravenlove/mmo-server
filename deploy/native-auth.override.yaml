@@ -1,0 +1,6 @@
+# 叠加于 auth-host.compose.yaml；保持已有 SSH/MySQL 转发和同一个数据库。
+services:
+  auth:
+    image: ${MMO_IMAGE_PREFIX:-ghcr.io/dravenlove/mmo-server}/${MMO_NATIVE_IMAGE_NAME:-backend}:${MMO_NATIVE_IMAGE_TAG:?Set a validated immutable native image tag}
+    entrypoint: ["/usr/local/bin/native-account"]
+    command: []

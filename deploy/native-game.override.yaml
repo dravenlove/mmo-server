@@ -1,0 +1,59 @@
+# 叠加于 game-host.compose.yaml。保留原场景镜像、数据卷、网络与 TCP 端口。
+# Compose >= 2.24.4；切换前必须先停止旧 Backend 写入者与占用 WS 端口的 bridge。
+x-native: &native
+  image: ${MMO_IMAGE_PREFIX:-ghcr.io/dravenlove/mmo-server}/${MMO_NATIVE_IMAGE_NAME:-backend}:${MMO_NATIVE_IMAGE_TAG:?Set a validated immutable native image tag}
+
+x-websocket: &websocket
+  WEBSOCKET_LISTEN: 0.0.0.0:7001
+  WEBSOCKET_ALLOWED_ORIGINS: ${NATIVE_ALLOWED_ORIGINS:?Set the existing exact browser Origin whitelist}
+
+services:
+  backend:
+    <<: *native
+    build: !reset null
+    entrypoint: ["/usr/local/bin/native-game-service"]
+    command: []
+
+  gateway:
+    <<: *native
+    build: !reset null
+    entrypoint: ["/usr/local/bin/native-gateway"]
+    command: []
+    environment:
+      WEBSOCKET_LISTEN: ""
+
+  gateway-webgl:
+    <<: *native
+    entrypoint: ["/usr/local/bin/native-gateway"]
+    command: []
+    environment:
+      <<: *websocket
+    ports:
+      - "127.0.0.1:7001:7001"
+
+  gateway-combat:
+    <<: *native
+    entrypoint: ["/usr/local/bin/native-gateway"]
+    command: []
+    environment:
+      <<: *websocket
+    ports:
+      - "127.0.0.1:7004:7001"
+
+  gateway-elemental:
+    <<: *native
+    entrypoint: ["/usr/local/bin/native-gateway"]
+    command: []
+    environment:
+      <<: *websocket
+    ports:
+      - "127.0.0.1:7006:7001"
+
+  gateway-skills:
+    <<: *native
+    entrypoint: ["/usr/local/bin/native-gateway"]
+    command: []
+    environment:
+      <<: *websocket
+    ports:
+      - "127.0.0.1:7008:7001"

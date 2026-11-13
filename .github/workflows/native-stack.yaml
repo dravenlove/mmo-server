@@ -1,0 +1,71 @@
+name: Native C++ stack
+run-name: Native C++ stack ${{ inputs.image_tag || github.sha }}
+on:
+  push:
+    branches: [codex/cpp-stack-migration]
+    paths: [native/**, scene/**, third_party/**, scripts/**, go.mod, go.sum, internal/**, cmd/**, deploy/native-*, Dockerfile.native, .github/workflows/native-stack.yaml]
+  pull_request:
+    paths: [native/**, scripts/test_native_stack.py, Dockerfile.native, .github/workflows/native-stack.yaml]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Optional unique tag to publish after validation
+        type: string
+        required: false
+        default: ''
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: native-stack-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    # 此迁移分支的push已执行同一套检查及发布，避免PR再次重复整套构建。
+    if: github.event_name != 'pull_request' || github.head_ref != 'codex/cpp-stack-migration'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake pkg-config libboost-system-dev libssl-dev libsqlite3-dev libmariadb-dev libcrypt-dev liblua5.4-dev mysql-server-core-8.0 mysql-client-core-8.0
+      - name: Verify opt-in deployment configuration
+        run: python3 scripts/check_native_compose.py
+      - name: Build and verify native services
+        run: |
+          cmake -S native -B build/native-ci -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/native-ci --parallel 2
+          ctest --test-dir build/native-ci --output-on-failure
+          build/native-ci/account/native-account-unit --emit-bcrypt-fixture | go run native/account/tests/go_compat/hash_compat.go
+          python3 scripts/test_native_stack.py --build build/native-ci --scene build/native-ci/scene-core/scene-server
+          python3 scripts/test_native_mysql.py --build build/native-ci
+          python3 scripts/test_room_stack.py --build build/native-ci
+      - name: Run legacy protocol regressions against C++ replacements
+        run: |
+          python3 scripts/test_native_legacy.py --build build/native-ci --scene build/native-ci/room/native-worker
+          go test ./...
+      - name: Build runtime image
+        run: docker build --progress plain -f Dockerfile.native -t mmo/native:ci --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" .
+      - name: Verify runtime image and fresh volumes
+        run: python3 scripts/test_native_image.py --image mmo/native:ci
+      - name: Publish validated image
+        if: github.event_name != 'pull_request'
+        env:
+          REQUESTED_TAG: ${{ inputs.image_tag }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGE_TAG="${REQUESTED_TAG:-cpp-room-${GITHUB_SHA:0:12}}"
+          [[ "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] || exit 2
+          # 复用现有公开包的权限，C++使用独立不可变标签，不覆盖旧Go镜像。
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/backend:$IMAGE_TAG"
+          docker tag mmo/native:ci "$image"
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$image"
+          docker logout ghcr.io
+          anonymous=$(mktemp -d)
+          docker --config "$anonymous" pull "$image"
+          rm -rf -- "$anonymous"

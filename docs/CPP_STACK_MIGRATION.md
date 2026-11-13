@@ -1,6 +1,6 @@
 # C++ 游戏服务技术栈迁移方案
 
-日期：2026-11-13，Asia/Shanghai。用户已选择：玩家网关也迁至 C++，Go 主要用于运维工具。**技术路线已确定，本文阶段 0 完成；C++ 新网关、账号后台、ECS、Lua、Protobuf 与 KCP 迁移尚未实现，现网继续使用原有已验证服务。**
+日期：2026-11-13，Asia/Shanghai。用户已选择：玩家网关也迁至 C++，Go 主要用于运维工具。**阶段 1 / 2 的 C++ Gateway、AccountService、GameService 已有历史验证与镜像记录；本轮增加阶段 3 的多房间 Worker、EnTT 权威存储和受限 Lua 技能编排。见 [核心服务构建与切换](NATIVE_CPP_RUNBOOK.md)、[房间交接](ROOMS_LUA_ECS.md)及 [验证记录](VALIDATION.md)。房间候选镜像 cpp-room-91f4800c8a13 已通过完整 CI 并发布，未切换 VPS；Protobuf 与安全 KCP 仍未实现。**
 
 目标采用 C++ 游戏服务、Lua 玩法、组件化房间状态和 Protobuf 协议。原生 Unity 可增加 KCP 入口，WebGL 保留 WSS。现有账号、角色、数据库、四个 WSS 玩法入口及长期资产继续兼容。参考目标是这种技术分工，不以社区逆向表格作为某款商业游戏完整实现的证明。
 
@@ -11,8 +11,8 @@
 | 玩家网关 | C++ 网络接入、会话、协议、限流和路由 | 替换自研 Go WebSocket Bridge 与 Gateway |
 | 账号鉴权 | C++ AccountService | 替换 Go Auth，兼容旧身份、密码哈希和票据 |
 | 角色与大厅后台 | C++ GameService | 替换 Go Backend 的角色、房间、迁移、奖励与存档 |
-| 实时房间 | C++ BattleWorker / RoomInstance | 复用现有场景算法，建立逐局隔离和 ECS |
-| 玩法脚本 | 服务端可信 Lua 模块 | 技能编排、Buff、怪物和任务等玩法逐步移入 |
+| 实时房间 | C++ Worker / RoomInstance | 已复用现有场景算法，每房间独立 EnTT registry、Tick、事件与世界代次 |
+| 玩法脚本 | 服务端可信 Lua 5.4 模块 | 已实现弹道/墙体生成计划；Buff、怪物与任务脚本尚属后续扩展 |
 | 消息协议 | Protobuf 与旧 JSON 适配层 | 同一业务语义，分别编码给新旧客户端 |
 | 传输 | 原生 KCP 可选，浏览器 WSS | 两类入口使用同一套会话和业务分发 |
 | 长期数据 | 既有 MySQL | 维持原数据、事务、单写入者和角色身份 |
@@ -45,33 +45,37 @@ flowchart LR
     OPS -.-> BW
 ```
 
-game 主机承载 C++ Gateway、GameService 和少量 BattleWorker；auth 主机运行 C++ AccountService。大厅、房间管理和分配器初期可以是 GameService 内的模块。实时房间继续集中在 game，跨地域 auth 仅处理账号和登录。
+该图包含后续传输和缓存目标，当前入口仍为旧 JSON WebSocket / TCP，未接入 KCP、Protobuf 或 Redis。部署目标是 game 主机承载 C++ Gateway、GameService 和 Worker，auth 主机运行兼容 AccountService。当前房间目录与创建/加入编排在 GameService 内，尚无自动匹配和跨 Worker 分配器；实时房间继续集中在 game，跨地域 auth 仅处理账号和登录。
 
 ## C++ 内核与 Lua 的职责
 
-C++ 保有连接、时间推进、ECS、AOI、物理碰撞、资源消耗、最终伤害、状态版本和持久化提交。Lua 通过受约束的宿主 API 编排玩法，例如选择效果、发出弹道生成请求、施加 Buff、安排怪物阶段。Lua 不能绕过宿主规则直接改数据库、修改别人的房间或伪造结算结果。
+C++ 保有连接、时间推进、ECS、AOI、物理碰撞、资源消耗、最终伤害、状态版本和持久化提交。当前 Lua 仅通过 `host.emit(type,skill_id)` / `host.deny(reason)` 选择与已注册定义一致的单条弹道或墙体生成计划。具体数值与结算仍由 C++ 执行；近战等旧玩法继续使用原 C++ 规则。Buff、怪物阶段和任务脚本 API 尚未实现。Lua 不能直接改数据库、修改别人的房间或伪造结算结果。
 
-客户端继续提交技能 ID 和参数。服务端校验后把它们绑定到已发布的行为模块；客户端不上传可执行 Lua 源码。当前弹道和墙体先迁成与旧规则等价的实现，再扩展新的行为。
+客户端继续通过原 `skill_init` 提交技能 ID 和完整参数；C++ 校验后，施法调用房间绑定的可信行为模块。客户端不上传可执行 Lua 源码。当前弹道、墙体沿用旧连续碰撞与伤害算法，房间命令作为旧 JSON 的可选扩展，旧客户端无需发组房命令。
 
 ### ECS 组件与系统
 
-建议首批组件为 Transform、Velocity、Collider、CombatStats、SkillBook、Cooldowns、Projectile、Wall、Lifetime 和 Owner。系统按固定阶段处理输入、冷却、移动、碰撞、伤害、死亡、销毁和事件。账号资料与长期金币不需要强行变成 ECS 组件。
+已接入 EnTT v3.13.2：玩家、元素候选角色、NPC、Projectile 和 Wall 直接存于 registry 组件池，排序索引只持有实体句柄，保留原确定性遍历与稳定引用。玩家状态目前是聚合组件，尚未把 Transform、CombatStats、SkillBook 等每个字段拆开；不存在每 Tick 复制一套战斗状态的镜像。输入、冷却、移动、碰撞、伤害、死亡和事件继续使用原 C++ 算法。账号资料与长期金币仍由后台和数据库管理。
 
-每个 RoomInstance 独立持有组件注册表、Tick、随机源、实体和事件。一个 Worker 可管理多局；每局的写入通过同一个房间执行上下文串行完成。网络线程投递命令，不能直接修改 ECS。
+每个 RoomInstance 独立持有 Scene、组件注册表、世界代次、Tick、实体、事件与不可变脚本引用。一个 Worker 可管理多局，单条逻辑执行流串行处理有界命令并推进房间；网络线程不能直接修改 ECS。房间有 lobby / playing / finished 生命周期，容量、队列和每 Tick 工作量有上限；当前不提供跨 Worker 调度。
 
-对外实体 ID 包含对局及世界代次，不能把 registry 内部索引当成长期玩家 ID。Lua 中的实体引用应携带房间代次与实体代次，访问已销毁或其他房间实体时拒绝执行，避免悬空引用。
+对外继续使用旧角色 ID、对象 ID 与世界/会话代次，registry 内部索引不作为长期玩家 ID。房间路由、角色 owner/session 和 world_epoch 共同围栏迟到请求；Lua 只收到规范化上下文，不持有可跨调用保存的 ECS 指针。
 
 ### Lua 执行与更新
 
-初期每房间独立 Lua 状态，便于隔离脚本变量。设置分配额度、指令预算、宿主调用额度和对象数量上限；指令 Hook 不能约束所有宿主 C++ 调用，所以每个宿主 API 也要限制输入规模和工作量。脚本异常使用受保护调用捕获，不越过进程边界。
+每次规划调用使用新 Lua VM，房间固定不可变源码引用，避免全局变量和失败调用污染后续施法或其他房间；持续玩法状态留在 ECS。默认额度为 1 MiB 内存、50,000 指令、16 次暴露宿主调用、单条效果，源码 64 KiB、上下文 8 KiB，另限制深度、字符串与输出。脚本异常受保护捕获，未开放 io/os/package/debug、任意 load 或随机源；宿主 API 本身也受预算约束。
 
 先收集脚本发出的效果命令，验证完整批次后再提交资源与状态变化，避免脚本中途失败却只扣除部分 MP 或生成半套效果。宿主只暴露游戏需要的能力，不默认开放文件、系统命令或任意模块加载。
 
-每局固定脚本与规则版本。发布新脚本先加载校验，再分配给新对局；旧对局完成后回收旧版本。活动对局内替换脚本要另做状态迁移与回滚验证，不能仅靠重新加载文件宣称实现不停机更新。
+每局固定脚本 version + SHA-256，Backend 持久化两者。发布只从服务器配置的 manifest 加载并校验常规文件，成功后供新房间使用；旧房间继续持有旧源码。保留 `versions/<version>.json` 和旧源码供重启恢复，版本或 SHA 不匹配时拒绝恢复。动态房间数值配置同样固定，旧默认场景保留原热更接口。活动对局任意代码热换未实现。
+
+Worker 重启可以由持久目录重建房间并恢复已存角色，使用新世界代次、回到 lobby；不承诺恢复临时弹道、墙体或未存战斗进度。结束后的回收必须先提交最终 SQL 存档，再精确确认并移除实体，不能仅按断线时间删角色。接口与失败边界见 [房间交接](ROOMS_LUA_ECS.md)。
 
 ## 传输与协议兼容
 
-### WSS 与 KCP 共用业务分发
+### 后续阶段：WSS 与 KCP 共用业务分发
+
+以下是尚未实现的网络迁移约束；本轮继续旧 JSON WebSocket / TCP，不以房间内核完成代表传输已更新。
 
 浏览器不提供原生 TCP/UDP 套接字访问，因此保留 WSS；Protobuf 可以通过 WebSocket 二进制帧传输，不要求一定使用 KCP。[Unity Web 网络说明](https://docs.unity3d.com/6000.0/Documentation/Manual/webgl-networking.html)
 
@@ -81,7 +85,7 @@ C++ 保有连接、时间推进、ECS、AOI、物理碰撞、资源消耗、最�
 
 两个传输适配器都输出相同的业务命令，进入共同的 SessionManager、权限检查、路由和房间命令队列。不能为 WSS 和 KCP 各写一套技能与扣血逻辑。
 
-### Protobuf 迁移规则
+### 后续阶段：Protobuf 迁移规则
 
 - 新消息需要版本、请求 ID、命令类型和明确的字段存在性；角色和房间权限从已验证会话派生，不能信任客户端填写的身份。
 - 施法、移动、进场、完整快照和事件使用类型化消息，保留世界代次、定义版本、动作去重和事件游标语义。
@@ -116,34 +120,34 @@ Redis 用于可重建的索引和缓存，房间实时状态仍在 Worker 内存
 
 | 阶段 | 交付内容 | 必须通过 |
 | --- | --- | --- |
-| 0 技术路线 | 当前方案、模块边界、兼容与验证清单 | 与现有代码和用户选择一致；本次完成 |
-| 1 C++ 玩家网关 | 替换自研 Go Bridge/Gateway，旧 Go Auth/Backend 暂时兼容 | 四种旧 WSS profile、Origin/TLS、帧限制、登录、移动、技能、状态、断线和旧会话隔离 |
-| 2 C++ 账号与业务后台 | 替换 Auth、角色/迁移/奖励/存档，保持旧库 | 原密码/长期 token、新票据轮换、重启身份一致、无 DELETE 权限、迁移故障恢复、幂等奖励和数据库锁丢失 |
-| 3 房间与 ECS Lua | 独立 RoomInstance，移植旧规则后增加 Lua 编排 | 双房间隔离、旧技能等价、脚本超限/失败无部分提交、版本固定、房间结束回收和重连 |
+| 0 技术路线 | 当前方案、模块边界、兼容与验证清单 | 与现有代码和用户选择一致；已完成 |
+| 1 C++ 玩家网关 | 已实现，替换自研 Go Bridge/Gateway，保留旧后端兼容 | 四种旧 WSS profile、Origin/TLS、帧限制、登录、移动、技能、状态、断线和旧会话隔离；历史证据见验证记录 |
+| 2 C++ 账号与业务后台 | 已实现，替换 Auth、角色/迁移/奖励/存档，保持旧库 | 原密码/长期 token、新票据轮换、重启身份一致、无 DELETE 权限、迁移故障恢复、幂等奖励和数据库锁丢失；已有 cpp-core 历史镜像 |
+| 3 房间与 ECS Lua | 已实现并发布候选：多房间、EnTT 存储、受限 Lua 弹道/墙体计划及目录/回收 | 隔离、权限、预算、版本固定、存档确认、重连与旧协议回归通过；容器及匿名拉取通过，VPS 未切换 |
 | 4 Protobuf 与原生 KCP | 新二进制协议、C# schema、受保护的 KCP 接入 | 新旧协议行为一致、授权和重放检查、丢包/乱序/限速测试、WebGL WSS 保留 |
-| 5 运维与规模化 | Go 探针/发布、指标、按需 Redis | 可观测、可排空旧对局后发布、数据核对、缓存故障及回退演练 |
+| 5 运维与规模化 | 已有 Python 房间 status/reload/drain；指标、自动调度与 Redis 待实现 | 可观测、可排空旧对局后发布、数据核对、缓存故障及回退演练 |
 
 阶段 1 的 C++ 网关需保留输入与慢 I/O 分离、自动 view 在途上限、旧结果丢弃、异步快照的顺序，以及最终断开保存。网络代码不应退回“一个阻塞请求卡住整条连接”的实现。
 
 阶段 2 完成后，自研 Go 服务才可以退出账号与游戏业务链路。旧 Go 实现可保留为回归对照和回退材料；最终迁移完成以实际运行依赖检查为准，不以文件扩展名或构建成功为准。
 
-阶段 3 的 ECS 迁移先复用现有移动、连续碰撞、弹道/墙体及代次规则。Lua 首批行为与原规则做同输入、同 Tick、同预期结果的对照；增加新技能放在等价性通过之后。每房间和 Worker 都需要输入、实例、队列和 Tick 工作量上限。
+阶段 3 复用现有移动、连续碰撞、弹道/墙体及代次规则，以独立 registry 隔离房间。Lua 首批行为做同输入、同 Tick 对照并验证失败无部分提交，Worker 已设置输入、玩家、房间、队列与 Tick 工作量上限；这些保护阈值不是容量或延迟承诺。自动匹配、细粒度 ECS 拆分和通用玩法脚本继续单独验收。
 
-## 实现入口与技术候选
+## 实现入口与后续边界
 
-| 现有代码 | 目标落点 |
+| 现有代码 | 当前实现或后续落点 |
 | --- | --- |
-| `internal/wsbridge/`、`internal/gateway/` | 新 `native/gateway/` 与 `native/session/` |
+| `internal/wsbridge/`、`internal/gateway/` | `native/gateway/`，会话 actor 位于该模块内 |
 | `internal/authsvc/` | 新 `native/account/` |
 | `internal/backend/identity.go`、`accounts.go`、`transfer.go`、`combat.go`、`store*.go` | 新 `native/game_service/`、`native/persistence/` |
-| `scene/src/scene.hpp`、`scene.cpp` | 新 `native/room/`、`native/ecs/`，保留旧 Scene 供回归 |
-| `scene/src/abilities.cpp`、`skill_lab.cpp`、`elemental.cpp` | 原算法移入系统，新增受限 `native/script/` 宿主 API 与 `scripts/gameplay/` |
-| 旧 JSON 协议文档 | 新 `protocol/native/v1/` schema 与旧 JSON 适配规范 |
+| `scene/src/scene.hpp`、`scene.cpp` | `scene/src/ecs_storage.hpp` 为权威存储，`native/room/` 复用 Scene 构造独立房间 |
+| `scene/src/abilities.cpp`、`skill_lab.cpp`、`elemental.cpp` | 保留原 C++ 算法；`native/script/` 与 `scripts/gameplay/` 已接入弹道/墙体计划，elemental 个人试炼保持默认场景协议 |
+| 旧 JSON 协议文档 | 原协议继续兼容；Protobuf schema 与新入口尚未实现 |
 | `.github/workflows/`、`scripts/` | C++ 镜像构建、回归、探针和 Go/Python 运维工具 |
 
-这些目录是规划位置，尚未据此创建可运行的新服务。网络候选为 [Boost.Asio/Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/index.html)，组件注册表候选为 [EnTT](https://github.com/skypjack/entt)，Lua 使用官方 C API。具体依赖固定版本、许可证和校验和后再加入构建；不在构建中拉取漂移的 master。现有 C++17 场景可以继续编译；新内核是否采用 C++20 在第一阶段结合 Linux/GCC 与 Windows 工具链验证后固定。
+`native/gateway/`、`native/account/`、`native/game_service/`、`native/persistence/`、`native/room/`、`native/script/` 已包含 C++17 实现与回归。网络使用 [Boost.Asio/Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/index.html)，EnTT v3.13.2 单头文件与 MIT 许可证随仓库固定，Lua 5.4 使用官方 C API 与系统依赖；校验值见 [第三方依赖](../third_party/README.md)。Ubuntu 24.04 镜像安装系统库，源码依赖不拉取漂移 master。现有场景和新核心均保持 C++17。
 
-Lua 的内存分配器、受保护调用与指令 Hook 可由官方 C API 提供，宿主仍需补充完整预算和能力限制。[Lua API](https://www.lua.org/source/5.4/lua.h.html)
+Lua 的自定义内存分配器、受保护调用和指令 Hook 已由官方 C API 接入，宿主另行实施输入规模、能力和调用额度限制。[Lua API](https://www.lua.org/source/5.4/lua.h.html)
 
 ## 部署与完成标准
 
@@ -153,4 +157,6 @@ Lua 的内存分配器、受保护调用与指令 Hook 可由官方 C API 提供
 
 上线前完成一致数据库备份，核对账号、身份哈希、金币、快照及未决迁移。切换 Auth/Backend 写入者时先停止旧写入者，再使 C++ 获取相同数据库锁；不会让新旧进程同时写库。回退代码或镜像不等于恢复旧数据库，不能覆盖切换后新增的数据。
 
-最终完成需要：玩家网关、账号、角色业务及战斗实际由 C++ 承担；Lua 玩法预算及版本机制可用；旧账号与四个 WSS 入口兼容；新协议与原生传输通过测试；Go 仅保留运维工具。当前仅完成阶段 0，不宣布全量迁移或性能提升。
+房间版 game 采用第三层 `native-room-game.override.yaml`，叠加原 game 与 C++ core 覆盖层，使用另行发布且验证过的 `MMO_ROOM_IMAGE_TAG`；Auth 和其他五个 Scene 的镜像独立保留。新增 `rooms_directory`、`room_returns`，恢复意图复用原迁移日志，旧账号、token、金币和快照保留。回退至不支持房间的 Backend 前，先停止新组房并重复执行 `scripts/room_admin.py drain`，确认动态归属及未决迁移为零；旧 Backend 无法理解 `room-…` 路由。完整操作见 [运行手册](NATIVE_CPP_RUNBOOK.md)。
+
+最终完成需要：玩家网关、账号、角色业务及战斗实际由 C++ 承担；Lua 玩法预算及版本机制可用；旧账号与四个 WSS 入口兼容；新协议与原生传输通过测试；Go 仅保留运维工具。当前源码覆盖核心服务、ECS、多房间及首批 Lua 技能计划，提供隔离验证和部署/回退入口；本轮 CI 发布、现网切换、Protobuf/KCP 与规模化分别验收，不宣布全量迁移或性能提升。

@@ -1,0 +1,35 @@
+# 第三层：game-host.compose.yaml + native-game.override.yaml + 本文件。
+# Auth和其他五个旧Scene标签不变；预先拉取已验证cpp-room镜像。
+x-room-core: &room-core
+  image: ${MMO_IMAGE_PREFIX:-ghcr.io/dravenlove/mmo-server}/backend:${MMO_ROOM_IMAGE_TAG:?Set a validated cpp-room tag}
+
+services:
+  backend:
+    <<: *room-core
+    environment:
+      ROOM_WORKER_URL: http://scene-skills:9006
+  gateway:
+    <<: *room-core
+  gateway-webgl:
+    <<: *room-core
+  gateway-combat:
+    <<: *room-core
+  gateway-elemental:
+    <<: *room-core
+  gateway-skills:
+    <<: *room-core
+  scene-skills:
+    <<: *room-core
+    build: !reset null
+    entrypoint: [/usr/local/bin/native-worker]
+    command: []
+    environment:
+      ROOM_SCRIPT_MANIFEST: /app/gameplay/manifest.json
+      WORKER_MAX_ROOMS: ${WORKER_MAX_ROOMS:-16}
+      WORKER_MAX_ROOM_PLAYERS: ${WORKER_MAX_ROOM_PLAYERS:-32}
+      WORKER_MAX_PLAYERS: ${WORKER_MAX_PLAYERS:-512}
+    volumes:
+      - type: bind
+        source: ${ROOM_GAMEPLAY_DIR:-../scripts/gameplay}
+        target: /app/gameplay
+        read_only: true

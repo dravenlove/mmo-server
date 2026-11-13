@@ -127,7 +127,7 @@ Json Scene::cast_ability(Entity& entity, const Json& request) {
         return reject("stale_action_seq");
     }
     if (combat.dead) return reject("dead");
-    auto& cooldown=config_.skill_lab_enabled?entity.skill_cooldowns[id]:combat.cooldowns.at(id);
+    auto& cooldown=config_.skill_lab_enabled?entity.skill_cooldowns.at(id):combat.cooldowns.at(id);
     if (cooldown>1e-7) return reject("cooldown",static_cast<int>(std::ceil(cooldown*1000-1e-7)));
     const int cost=definition.mp_cost;
     if (combat.mp+1e-7<cost) return reject("not_enough_mana");
@@ -159,6 +159,24 @@ Json Scene::cast_ability(Entity& entity, const Json& request) {
     } else {
         for (const auto& item:projectiles_) if (item.second.owner_id==entity.role.role_id) ++own;
         if (projectiles_.size()>=32 || own>=4) return reject("object_limit");
+    }
+    if (config_.ability_planner) {
+        // 计划阶段不允许直接接触组件。异常、拒绝或不完整批次均在扣费前退出。
+        try {
+            const Json context{{"skill_id", id}, {"definition", definition.json()},
+                {"origin", {{"x", entity.role.x}, {"y", entity.role.y}}},
+                {"aim", {{"dx", dx}, {"dy", dy}}}, {"target", {{"x", x}, {"y", y}}},
+                {"owner", {{"role_id", entity.role.role_id}, {"owner_epoch", entity.role.owner_epoch}, {"session_epoch", entity.role.session_epoch}}},
+                {"tick", tick_}, {"world_epoch", world_epoch_}};
+            const Json plan = config_.ability_planner(context);
+            if (!plan.is_object()) return reject("script_error");
+            if (plan.value("denied", false)) return reject("script_denied");
+            if (plan.size() != 1 || !plan.contains("effects") || !plan["effects"].is_array() || plan["effects"].size() != 1)
+                return reject("script_error");
+            const auto& effect = plan["effects"][0];
+            if (!effect.is_object() || effect.size() != 2 || effect.value("type", std::string()) != definition.kind ||
+                effect.value("skill_id", std::string()) != id) return reject("script_error");
+        } catch (...) { return reject("script_error"); }
     }
     combat.mp-=cost; cooldown=definition.cooldown; combat.last_action_seq=seq; ++combat.revision;
     entity.lease_age=0;
