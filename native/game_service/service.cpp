@@ -152,6 +152,7 @@ Service::Service(Config c) : config_(std::move(c)), db_(config_.database) {
     if (config_.token.size() < 32 || !config_.scenes.count(config_.default_scene)) throw Error(400, "invalid service configuration");
     for (auto& scene : config_.scenes) { Config check; parse_scenes(check, scene.first + "=" + scene.second); }
     if (!config_.auth_url.empty()) { Config check; parse_scenes(check, "auth=" + config_.auth_url); }
+    if (!config_.room_worker_url.empty()) { Config check; parse_scenes(check, "worker=" + config_.room_worker_url); }
     const std::vector<std::string> sqlite_schema{
         "CREATE TABLE IF NOT EXISTS roles (role_id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,token_hash TEXT NOT NULL UNIQUE,scene_id TEXT NOT NULL,owner_epoch INTEGER NOT NULL,epoch_counter INTEGER NOT NULL,session_epoch INTEGER NOT NULL,x REAL NOT NULL,y REAL NOT NULL,coins INTEGER NOT NULL CHECK(coins>=0))",
         "CREATE TABLE IF NOT EXISTS claims (operation_id TEXT PRIMARY KEY,role_id TEXT NOT NULL REFERENCES roles(role_id))",
@@ -168,6 +169,10 @@ Service::Service(Config c) : config_(std::move(c)), db_(config_.database) {
         auto count = db_.query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('roles','claims','migrations','combat_snapshots') AND ENGINE='InnoDB'");
         if (db::integer(count.at(0), 0) != 4) throw Error(503, "MySQL tables must use InnoDB");
     }
+    if (!config_.room_worker_url.empty()) {
+        while (config_.room_worker_url.back() == '/') config_.room_worker_url.pop_back();
+        room_schema(); restore_room_routes(); start_room_acks();
+    }
 }
 
 Json Service::role(const std::string& id) {
@@ -175,11 +180,13 @@ Json Service::role(const std::string& id) {
     if (rows.empty()) throw Error(404, "角色不存在");
     auto result = scan_role(rows[0]); load_combat(result); return result;
 }
-Json Service::route(const Json& r) const {
+Json Service::route(const Json& r) {
     const auto scene_id = text_field(r, "scene_id");
     auto found = config_.scenes.find(scene_id);
     if (found == config_.scenes.end()) throw Error(503, "角色场景不在配置中");
-    return {{"role", r}, {"scene_url", found->second}};
+    Json result{{"role", r}, {"scene_url", found->second}};
+    if (room_scene(scene_id)) { result["room_id"] = scene_id; result["room_profile"] = room_record(scene_id).at("profile"); }
+    return result;
 }
 Json Service::validate_session(const Json& req) {
     auto id = text_field(req, "role_id");
@@ -209,7 +216,22 @@ void Service::save_position(const Json& r) {
 }
 Json Service::scene(const std::string& id, const std::string& op, const Json& req) {
     if (!config_.scenes.count(id)) throw Error(400, "未知场景");
-    return http_post(config_.scenes.at(id), "/v1/" + op, req, config_.token, 2000);
+    auto body = req;
+    if (room_scene(id)) {
+        Json metadata;
+        if (op == "remove") {
+            // 清理不能复活已回收房间，也不能误删重启后同ID的新世界实体。
+            try { metadata = http_post(config_.room_worker_url, "/v1/rooms/status", {{"room_id", id}}, config_.token, 2000); }
+            catch (const Error& error) { if (error.status == 404) return {{"accepted", true}}; throw; }
+        } else metadata = ensure_room(id);
+        body["_room_world_epoch"] = metadata.at("world_epoch");
+    }
+    try { return http_post(config_.scenes.at(id), "/v1/" + op, body, config_.token, 2000); }
+    catch (const Error& error) {
+        // 不存在的临时房间没有可复活的旧实体；移除仍须可幂等完成迁移清理。
+        if (room_scene(id) && op == "remove" && error.status == 404) return {{"accepted", true}};
+        throw;
+    }
 }
 Json Service::auth(const std::string& op, const Json& req) {
     try { return http_post(config_.auth_url, "/v1/" + op, req, config_.token, 5000); }
@@ -273,6 +295,8 @@ Json Service::login_role(const std::string& id) {
     recover_role(id);
     db_.exec("UPDATE roles SET session_epoch=session_epoch+1 WHERE role_id=?", {id});
     auto r = role(id); Json out;
+    if (room_scene(text_field(r, "scene_id"))) recover_finished_room(r);
+    if (room_scene(text_field(r, "scene_id"))) bind_room_world(r, ensure_room(text_field(r, "scene_id")), false);
     try { out = scene(text_field(r, "scene_id"), "enter", {{"role", r}}); }
     catch (...) { throw Error(503, "当前场景无法入场，请稍后重新登录"); }
     if (!out.contains("role") || !snapshot(out["role"], r)) throw Error(503, "场景返回了无效角色快照");
@@ -280,7 +304,29 @@ Json Service::login_role(const std::string& id) {
     db::Tx tx(db_); save_position(r); save_combat(r); tx.commit(); return route(r);
 }
 Json Service::session(const Json& req) {
-    fields(req, {"role_id", "session_epoch"}); validate_session(req); auto id = text_field(req, "role_id"); recover_role(id); return route(role(id));
+    fields(req, {"role_id", "session_epoch"}); validate_session(req); auto id = text_field(req, "role_id"); recover_role(id);
+    auto r = role(id);
+    if (room_scene(text_field(r, "scene_id"))) {
+        recover_finished_room(r);
+        if (room_scene(text_field(r, "scene_id"))) {
+            const auto meta = ensure_room(text_field(r, "scene_id"));
+            bind_room_world(r, meta, true);
+            bool present = false;
+            for (const auto& member : meta.value("members", Json::array())) {
+                const auto& value = member.contains("role") ? member["role"] : member;
+                if (value.value("role_id", std::string()) == text_field(r, "role_id") &&
+                    value.value("owner_epoch", std::int64_t{0}) == integer_field(r, "owner_epoch") &&
+                    value.value("session_epoch", std::int64_t{0}) == integer_field(r, "session_epoch")) present = true;
+            }
+            if (!present) {
+                const auto entered = scene(text_field(r, "scene_id"), "enter", {{"role", r}});
+                if (!entered.contains("role") || !snapshot(entered["role"], r)) throw Error(503, "invalid restored room role");
+                copy_snapshot(r, entered["role"]);
+                db::Tx tx(db_); save_position(r); save_combat(r); tx.commit();
+            }
+        }
+    }
+    return route(r);
 }
 Json Service::checkpoint(const Json& req) {
     fields(req, {"role"}); if (!req.contains("role")) throw Error(400, "无效角色快照");
@@ -293,7 +339,9 @@ Json Service::checkpoint(const Json& req) {
     db::Tx tx(db_);
     auto count = db_.exec("UPDATE roles SET x=?,y=? WHERE role_id=? AND scene_id=? AND owner_epoch=? AND session_epoch=? AND NOT EXISTS(SELECT 1 FROM migrations WHERE role_id=? AND status NOT IN ('DONE','ABORTED'))", {number_field(r, "x"), number_field(r, "y"), text_field(r, "role_id"), text_field(r, "scene_id"), integer_field(r, "owner_epoch"), integer_field(r, "session_epoch"), text_field(r, "role_id")});
     if (count != 1) throw Error(409, "快照归属或会话已失效，或角色正在迁移");
-    save_combat(r); tx.commit(); return {{"ok", true}};
+    save_combat(r); tx.commit();
+    try { queue_room_ack(r); } catch (...) { /* 缓存确认失败不改变已成功的持久化提交。 */ }
+    return {{"ok", true}};
 }
 Json Service::claim(const Json& req) {
     fields(req, {"role_id", "session_epoch"}); validate_session(req); auto id = text_field(req, "role_id"); recover_role(id);
@@ -313,7 +361,12 @@ Json Service::execute(const std::string& op, const Json& req) {
     if (op == "session") return session(req);
     if (op == "checkpoint") return checkpoint(req);
     if (op == "claim") return claim(req);
-    if (op == "transfer") return transfer(req);
+    if (op == "transfer") {
+        if (req.contains("target_scene_id") && req["target_scene_id"].is_string() && room_scene(req["target_scene_id"])) throw Error(400, "use room_join for dynamic room entry");
+        return transfer(req);
+    }
+    if (op == "room_drain") return drain_rooms(req);
+    if (op.rfind("room_", 0) == 0) return room_request(op, req);
     throw Error(404, "接口不存在");
 }
 void Service::health() { std::lock_guard<std::mutex> guard(mutex_); db_.ping(); }

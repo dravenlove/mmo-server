@@ -1,6 +1,6 @@
 # 项目协作记忆与接手入口
 
-维护日期：2026-11-13，Asia/Shanghai。运行快照于当日 10:48 只读复查；整理开始前源码/文档提交为 `9fed850466b31525c4ea4abeaa990c03a8f98174`。当日后续在 `codex/cpp-stack-migration` 实现 C++ 核心替换并隔离验证；此后源码/文档提交不代表现网容器已经重新构建或切换。
+维护日期：2026-11-13，Asia/Shanghai。运行快照于当日 10:48 只读复查；整理开始前源码/文档提交为 `9fed850466b31525c4ea4abeaa990c03a8f98174`。当日后续在 `codex/cpp-stack-migration` 实现 C++ 核心替换及 Lua/ECS 房间并隔离验证；此后源码/文档提交不代表现网容器已经重新构建或切换。
 
 本文件供接手 agent、客户端负责人、验证及部署负责人共享项目事实。它集中记录架构、代码入口、协议约定、版本、验证和交接流程；具体消息格式以对应协议文档和当前源码为准。仓库当前代码、当次运行检查和用户最新要求优先于历史快照。
 
@@ -16,7 +16,7 @@
 
 ## 2. 已确定的职责和拓扑
 
-2026-11-13 用户进一步选择目标技术栈：**玩家网关和游戏业务迁到 C++，Go 主要用于运维工具**。迁移边界、Lua/ECS、双传输、旧账号与数据库兼容及阶段验收见 [C++ 技术栈迁移方案](CPP_STACK_MIGRATION.md)。核心 C++ Gateway/Auth/GameService 首版实现已在 `native/`，构建与切换见 [NATIVE_CPP_RUNBOOK.md](NATIVE_CPP_RUNBOOK.md)，验证见 [VALIDATION.md](VALIDATION.md)。Lua/ECS/Protobuf/安全 KCP 后续实施；现有 Go 网关/Auth/Backend 仍是已知线上运行实现。以下拓扑和版本表描述现有服务，不能因源码新增 C++ 就删除旧服务或改写为已全量上线。
+2026-11-13 用户进一步选择目标技术栈：**玩家网关和游戏业务迁到 C++，Go 主要用于运维工具**。迁移边界、双传输、旧账号与数据库兼容见 [C++ 技术栈迁移方案](CPP_STACK_MIGRATION.md)。核心 C++ Gateway/Auth/GameService 已在 `native/`，后续加入了 [Lua / ECS / 房间 Worker](ROOMS_LUA_ECS.md)；构建与切换见 [NATIVE_CPP_RUNBOOK.md](NATIVE_CPP_RUNBOOK.md)，验证见 [VALIDATION.md](VALIDATION.md)。Protobuf/安全 KCP 尚未实现；现有 Go 网关/Auth/Backend 仍是已知线上运行实现。以下拓扑和版本表描述现有服务，不能因源码新增 C++ 就删除旧服务或改写为已全量上线。
 
 ```mermaid
 flowchart LR
@@ -209,7 +209,7 @@ Windows 使用 `scripts/build.ps1` 和带 `-C Release` 的 CTest。真实规则/
 
 以下是接手线索，不是自动执行任务或部署授权：
 
-- 2026-11-13 已整理 [房间制架构参考与建议](ROOM_ARCHITECTURE_REFERENCE.md)，参考 Steam、Photon、GameLift、Nakama、Riot 及 Agones 官方资料。属于研究稿，通用大厅/组房/开局/多房间 Worker 尚未实现，不能据此替换现网或声称已有房间服务。
+- [房间制架构参考与建议](ROOM_ARCHITECTURE_REFERENCE.md) 是早期研究稿。2026-11-13 后续实际实现已见 [Lua / ECS / 房间 Worker](ROOMS_LUA_ECS.md)，不要把研究稿中的候选系统当作全部已交付。
 
 - Unity 登录 UI 接入 `account_* → login`；新参数技能解析、定义编辑和实例表现仍需客户端工作。
 - 真实浏览器输入到画面的延迟、预测/纠正/插值、单客户端战斗卡顿仍需浏览器测量；服务器协议延迟不能替代该验证。
@@ -230,5 +230,14 @@ Windows 使用 `scripts/build.ps1` 和带 `-C Release` 的 CTest。真实规则/
 - 独立 Ubuntu WSL 完成 7 个新 CTest、9 个旧 Scene CTest、四 profile 直接 C++ WS、完整旧 smoke 与隔离 MySQL 8 跨语言接管回归；精确范围见 [VALIDATION.md](VALIDATION.md)。镜像 CI 与发布必须读取当前工作流和 revision，不能从工作树测试推定镜像已发布。
 - 已修复并新增回归：所有权切换时不能查询冻结源；慢显式 view 不能回退较新状态/最终存档；Elemental 登录部分成功后必须保留精确路由完成断开清理。后续重构异步通道时保留这些用例。
 - 新限制：直连 TCP TLS 暂不在 C++ Gateway 内终止，原证书变量非空时拒绝启动，不能清空变量降级；MySQL 库名要求 ASCII，localhost 强制 TCP 并尊重 MYSQL_PORT。旧 Go Auth 的 SQLite 锁不等价，必须串行停启。
-- 本次尚未切换两台 VPS、未重启旧场景、未改 Unity 客户端。Lua/ECS 房间、Protobuf、安全 KCP、Redis/集群仍属于后续阶段；Go 旧服务代码保留为回归对照和回退材料。
+- 核心替换阶段尚未切换两台 VPS、未重启旧场景、未改 Unity 客户端。Lua/ECS 房间随后加入；Protobuf、安全 KCP、Redis/集群仍属于后续阶段。Go 旧服务代码保留为回归对照和回退材料。
 - 首个已验证核心候选镜像为 `ghcr.io/dravenlove/mmo-server/backend:cpp-core-20b17dbaf793`，revision `20b17dbaf7937cf935fb1dac130ed3691dd90af2`，digest `sha256:3bfea5e02734378867fbcf5e80c25b170f361f2245b6909745fec405efd62915`。[Linux CI 43407338371](https://github.com/dravenlove/mmo-server/actions/runs/43407338371) 全部通过，包含普通用户完整容器链路、新卷、匿名 Docker 拉取；另有 Windows 匿名 manifest/config 核对。它是候选发布，**不是已上线版本**。新源码位于 `codex/cpp-stack-migration` / [PR #1](https://github.com/dravenlove/mmo-server/pull/1)，未合并前 main 没有新服务文件；纯文档后续提交不代表镜像 revision 改变。
+
+## 2026-11-13 后续：Lua / ECS / 房间交接
+
+- 全部接口、脚本 API、故障边界、客户端增量与部署步骤见 [ROOMS_LUA_ECS.md](ROOMS_LUA_ECS.md)。`native/room/` 是真实多房间 Worker；`native/script/` 是有预算的 Lua 5.4 生成计划；`scene/src/ecs_storage.hpp` 与 `third_party/entt/` 提供真实权威组件池，没有双份战斗镜像。
+- `native/game_service/rooms.cpp` 管房间目录、版本/SHA、重入与归属；`room_gc.cpp` 仅在 SQL 成功后异步确认回收；`room_admin.cpp` 维护排空。新表是 `rooms_directory` / `room_returns`，原账号/角色/快照/迁移表及命名锁保留，不依赖 DELETE。Worker 重建会绑定新世界并旋转会话，旧检查点及私有控制请求均有围栏。
+- Gateway 保持四个 WSS 路径及 JSON/TCP 协议，新增八个 room 命令；旧客户端仍使用默认兼容场景。跨 profile 重登安全离房；异步 view 不得覆盖较新 ready/start/世界代次。Lua 首版只编排已注册弹道/墙体，碰撞/伤害仍由 C++ 结算，其他旧战斗尚未改成 Lua。
+- 本机统一 Debug **20/20 CTest**、三账号双房/新旧脚本/重启恢复、四 profile 直接 C++ WS、旧完整 smoke、隔离 MySQL 8 无 DELETE 权限、Go 全套及四种 Compose 离线合并已通过。完整证据和镜像发布分别见 [VALIDATION.md](VALIDATION.md)。不能把测试脚本的合成账号当成真实受控账号。
+- 新第三层 `deploy/native-room-game.override.yaml` 只升级 game 核心与 scene-skills，保留 Auth 及其余五个旧 Scene。必须使用含 `native-worker` 的 `cpp-room-…` 新镜像；旧 `cpp-core-…` 不适用新本机 Compose。回退旧 Backend 前先 `scripts/room_admin.py drain`，确认动态角色及未决迁移归零；不能删库或还原旧 SQL 覆盖新数据。
+- 本轮没有改动两台 VPS、线上数据或 Unity 工程。新版本仍在迁移分支/PR，Protobuf、安全 KCP、Redis/集群、真正对局无损恢复与 Unity 画面验收留后续。

@@ -5,6 +5,21 @@
 
 
 
+## 2026-11-13：Lua / ECS / 房间 Worker（隔离验证，未切现网）
+
+在 C++ 核心替换上新增 `native-worker`、`native-script`、EnTT 权威组件存储、GameService 房间目录与新 Gateway 房间命令。设计、客户端增量接口及部署/排空流程见 [ROOMS_LUA_ECS.md](ROOMS_LUA_ECS.md)。
+
+本机独立 Ubuntu 24.04 WSL / GCC 13.3 / Lua 5.4.6 完成：
+
+- 统一 Debug 构建与 **20/20 CTest**：原生数据库/账号/旧库接管、网关竞态、Lua 沙箱预算、ECS 与旧 Scene 算法、Room 生命周期及真实 HTTP。新世界会话旋转、迟到的旧控制请求、旧检查点被拒绝、版本及 SHA 固定、存档后回收、离线排空均有回归。
+- `test_room_stack.py`：三隔离密码账号、两个并行房间、准备/房主权限、客户端参数化弹道、跨房隔离；新脚本只影响新房，Lua deny 不扣 MP/序号或生成半套对象；Worker/Backend/Gateway 重启后保留身份、100 金币、房间路由与归档版本；结束后的活房/空房角色安全回原大厅。
+- `test_native_legacy.py --scene .../native-worker`：原 15 项基础流程、PvP 弹道/墙体、元素个人试炼和迁移丢响应恢复、技能实验室参数/版本/重连通过。兼容默认场景实际换成 Lua/ECS Worker；部分旧 WebSocket 用例仍通过旧 Go bridge 对照，直接 C++ WS 由网关 CTest 和下一项覆盖。
+- 四 profile 直接 C++ WebSocket 账号/移动/失效会话/重启通过；C++ bcrypt 产物由 Go 验证。原 Go `go test ./...` 通过。
+- 独立 MySQL 8.0.46 通过全部跨语言接管与 Backend 不变量，包括新增房间表和恢复测试。GameService 与 Auth 均使用无 DELETE 的受限测试账号；角色、旧 token、100 金币和战斗快照保持，原命名锁与固定连接失联停止写入不变。没有连接真实业务库。
+- 实际离线合并四份部署组合：新第三层只切核心镜像与 scene-skills Worker，保留 Auth、其他五个 Scene、原数据卷、TLS 和端口。测试工具补齐 WebSocket continuation 解析，能读取超过单帧大小的真实房间视图。
+
+镜像的 Release 构建、普通用户容器/新卷和匿名拉取由独立 Linux CI 验证，发布证据随后记录。上述进程验证不等于 VPS 切换、真实 Unity 画面、全国网络或容量验收。Lua 首版只编排已注册弹道/墙体的生成计划；Protobuf、安全 KCP、Redis/集群及完整对局无损恢复尚未实现。
+
 ## 2026-11-13：C++ 核心服务迁移（隔离验证，未切现网）
 
 新增 `native-gateway`、`native-account`、`native-game-service` 和共享 `native-db`。在本机独立 Ubuntu 24.04 WSL 环境以 GCC 13.3 / C++17 构建；未使用两台 VPS 编译，也未修改 Unity 工程。构建、镜像和切换入口见 [NATIVE_CPP_RUNBOOK.md](NATIVE_CPP_RUNBOOK.md)。
@@ -19,7 +34,7 @@
 
 [完整 Linux CI 43407338371](https://github.com/dravenlove/mmo-server/actions/runs/43407338371) 对源码 `20b17dbaf7937cf935fb1dac130ed3691dd90af2` 全部通过：上述回归、Release 运行镜像、普通用户容器与新 SQLite 卷、真实 C++ WS→GameService→Auth→Scene 的账号/移动/参数化施法，以及匿名 Docker 拉取。已发布 `ghcr.io/dravenlove/mmo-server/backend:cpp-core-20b17dbaf793`，digest `sha256:3bfea5e02734378867fbcf5e80c25b170f361f2245b6909745fec405efd62915`；Windows 客户机再以匿名 registry token 读取 manifest/config，确认 linux/amd64、原生 Gateway 入口及相同 revision。发布复用既有公开 backend 包，使用独立 C++ 标签，旧 Go 标签未覆盖。
 
-这些是隔离进程/数据库的结果，不是 VPS 更新、真实 Unity 画面、全国网络或容量验收。尚未实现 Lua/ECS 房间、新 Protobuf 和安全 KCP；原生 TCP 直连 TLS 暂需受信任代理，不能清空证书变量降级。现网仍按下面已有运行快照管理。
+这些是阶段 2 的隔离进程/数据库结果，不是 VPS 更新、真实 Unity 画面、全国网络或容量验收。Lua/ECS 房间在上述后续阶段加入；Protobuf 和安全 KCP 尚未实现。原生 TCP 直连 TLS 暂需受信任代理，不能清空证书变量降级。现网仍按下面已有运行快照管理。
 
 ## 2026-11-13：账号密码登录部署与公网验收
 

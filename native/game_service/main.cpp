@@ -45,6 +45,7 @@ int main(int argc, char** argv) {
         native::game::Config config;
         config.token = native::env("INTERNAL_TOKEN");
         config.auth_url = native::env("AUTH_URL");
+        config.room_worker_url = native::env("ROOM_WORKER_URL");
         config.database.driver = native::env("BACKEND_DB_DRIVER", "sqlite");
         config.database.path = native::env("BACKEND_DB", "data/mmo.db");
         config.database.host = native::env("MYSQL_HOST");
@@ -80,7 +81,7 @@ int main(int argc, char** argv) {
             if (size > 16384) { write(response, 431, {{"error", "HTTP headers too large"}}); return httplib::Server::HandlerResponse::Handled; }
             return httplib::Server::HandlerResponse::Unhandled;
         });
-        const std::set<std::string> ops{"register", "login", "session", "checkpoint", "transfer", "claim", "account_register", "account_login", "account_bind"};
+        const std::set<std::string> ops{"register", "login", "session", "checkpoint", "transfer", "claim", "account_register", "account_login", "account_bind", "room_create", "room_list", "room_join", "room_leave", "room_status", "room_ready", "room_start", "room_finish", "room_drain"};
         server.Get("/healthz", [&](const httplib::Request&, httplib::Response& response) {
             try { service.health(); write(response, 200, {{"ok", true}, {"service", "backend"}, {"implementation", "cpp"}}); }
             catch (...) { write(response, 503, {{"error", "数据库不可用"}}); }

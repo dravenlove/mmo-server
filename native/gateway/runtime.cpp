@@ -14,6 +14,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -129,7 +130,9 @@ private:
     const Config& config_;
     Http& http_; Pools& pools_;
     Send send_; Close close_; Removed removed_;
-    Json route_, last_view_;
+    Json route_, last_view_, room_meta_;
+    std::set<std::string> retired_room_worlds_;
+    std::uint64_t room_world_generation_=0;
     std::deque<Input> commands_, moves_;
     std::deque<std::string> writes_;
     std::optional<Json> checkpoint_pending_;
@@ -143,7 +146,55 @@ private:
     Clock::time_point rate_window_=Clock::now(), valid_until_{}, next_session_=Clock::now(), next_save_=Clock::now()+std::chrono::seconds(2), view_retry_at_{};
     bool ownership_change(const Input& in) const {
         const auto op=in.data.value("op",std::string());
-        return op == "transfer" || op == "login" || op == "enter_arena" || op == "leave_arena" || op == "restart_battle";
+        return op == "transfer" || op == "login" || op == "enter_arena" || op == "leave_arena" || op == "restart_battle" || op == "room_join" || op == "room_leave";
+    }
+    void reset_room_metadata() {
+        room_meta_=nullptr; retired_room_worlds_.clear(); room_world_generation_=0;
+    }
+    bool current_room(const Json& room) const {
+        if (!valid_room_metadata(room) || !route_.is_object()) return false;
+        if (room["room_id"]==route_["role"]["scene_id"]) return true;
+        // 旧Elemental个人arena是同一默认Scene的别名，不是动态房间。
+        return config_.profile=="elemental" && room.value("legacy",false) && room["room_id"]==config_.login_scene &&
+               (route_["role"]["scene_id"]==config_.login_scene || route_["role"]["scene_id"]==config_.arena_scene);
+    }
+    bool remember_room(const Json& room, std::uint64_t issued_room_generation) {
+        if (!current_room(room)) throw Failure("invalid room metadata");
+        const auto world=room["world_epoch"].get<std::string>();
+        if (retired_room_worlds_.count(world)) return false;
+        if (room_meta_.is_object() && room_meta_["room_id"]==room["room_id"]) {
+            if (room_meta_["world_epoch"]==room["world_epoch"]) {
+                const auto previous=room_meta_["revision"].get<std::uint64_t>(), next=room["revision"].get<std::uint64_t>();
+                if (next<previous) return false;
+                if (next==previous) {
+                    // 同代次完整ACK与摘要view互补；摘要不能删掉已知的成员ready状态。
+                    const auto tick=room_meta_.value("tick",Json());
+                    room_meta_.update(room);
+                    if (tick.is_number_integer() && room_meta_.contains("tick") && room_meta_["tick"].is_number_integer() && room_meta_["tick"]<tick) room_meta_["tick"]=tick;
+                } else room_meta_=room;
+            } else {
+                if (issued_room_generation!=room_world_generation_) return false;
+                if (retired_room_worlds_.size()>=64) throw Failure("room world history exhausted; reconnect",409);
+                retired_room_worlds_.insert(room_meta_["world_epoch"].get<std::string>());
+                ++room_world_generation_; room_meta_=room; last_view_=nullptr;
+            }
+        } else {
+            ++room_world_generation_; room_meta_=room;
+            // 首次看到Worker房间身份时，不把不含世界代次的旧快照当成同世界数据。
+            if (last_view_.is_object() && !last_view_.contains("room")) last_view_=nullptr;
+        }
+        if (last_view_.is_object()) last_view_["room"]=room_meta_;
+        return true;
+    }
+    bool remember_view_room(Json& view, std::uint64_t issued_room_generation) {
+        if (!view.is_object()) throw Failure("invalid service response");
+        if (!view.contains("room")) return room_meta_.is_null();
+        const auto& room=view["room"];
+        if (view.contains("world_epoch") && view["world_epoch"].is_string() && !view["world_epoch"].get_ref<const std::string&>().empty() &&
+            valid_room_metadata(room) && view["world_epoch"]!=room["world_epoch"]) throw Failure("view world and room world disagree");
+        if (!remember_room(room,issued_room_generation)) return false;
+        view["room"]=room_meta_;
+        return true;
     }
     template<class Work,class Done> void execute(asio::thread_pool& pool,Work work,Done done) {
         auto self=shared_from_this();
@@ -257,7 +308,8 @@ private:
         ownership_transition_=ownership_change(in);
         if (op == "view" || op == "skill_init" || ownership_transition_) ++generation_;
         const auto command_generation=generation_;
-        execute(pools_.commands,[this,in,route] { return perform(in,route); },[self=shared_from_this(),in,route,command_generation](Result result) {
+        const auto command_room_generation=room_world_generation_;
+        execute(pools_.commands,[this,in,route] { return perform(in,route); },[self=shared_from_this(),in,route,command_generation,command_room_generation](Result result) {
             self->command_busy_=false;
             self->ownership_transition_=false;
             self->commands_.pop_front();
@@ -266,17 +318,19 @@ private:
                 if (op=="login" && result.error && result.established_route.is_object()) {
                     // 入场已成功而初始视图失败，仍持有精确会话，供重试/断开时清理。
                     Result accepted(result.established_route);
-                    self->route_=require_route(accepted); self->last_view_=nullptr;
+                    self->route_=require_route(accepted); self->last_view_=nullptr; self->reset_room_metadata();
                     self->valid_until_=Clock::now()+std::chrono::seconds(4); self->next_session_=Clock::now()+std::chrono::seconds(1);
                 }
                 if (!result.error) {
-                    bool returns_route=op=="login" || op=="transfer";
+                    bool returns_route=op=="login" || op=="transfer" || op=="room_join" || op=="room_leave";
                     if (self->config_.profile=="elemental" && (op=="enter_arena" || op=="leave_arena" || op=="restart_battle") && result.value.is_object() && result.value.contains("scene_url")) returns_route=true;
                     if (returns_route) {
-                        self->route_=require_route(result); self->last_view_=nullptr;
+                        self->route_=require_route(result); self->last_view_=nullptr; self->reset_room_metadata();
                         if (self->route_.contains("initial_view")) {
                             auto view=self->route_["initial_view"]; self->route_.erase("initial_view");
-                            overlay_balance(view,self->route_["role"]); self->last_view_=std::move(view);
+                            overlay_balance(view,self->route_["role"]);
+                            if (!self->remember_view_room(view,0)) throw Failure("room changed while requesting initial view",409);
+                            self->last_view_=std::move(view);
                         }
                         self->valid_until_=Clock::now()+std::chrono::seconds(4); self->next_session_=Clock::now()+std::chrono::seconds(1);
                         if (op=="enter_arena" || op=="leave_arena" || op=="restart_battle") result.value={{"accepted",true},{"reason",""}};
@@ -288,9 +342,15 @@ private:
                             if (!same_role(result.value.value("self",Json()),self->route_["role"])) throw Failure("invalid service response");
                             overlay_balance(result.value,self->route_["role"]);
                         }
-                        if (fresh_view(self->last_view_,result.value)) self->last_view_=result.value;
-                        else result.value=self->last_view_;
+                        if (self->remember_view_room(result.value,command_room_generation) && fresh_view(self->last_view_,result.value)) self->last_view_=result.value;
+                        else if (self->last_view_.is_object()) result.value=self->last_view_;
+                        else throw Failure("room changed while requesting view; retry",409);
                         result.value=client_view(result.value,self->config_.profile);
+                    } else if ((op=="room_ready" || op=="room_start" || op=="room_finish" || op=="room_status") &&
+                               self->route_.is_object() && same_role(route.value("role",Json()),self->route_["role"]) &&
+                               result.value.is_object() && result.value.value("room_id",std::string())==self->route_["role"].value("scene_id",std::string())) {
+                        self->remember_room(result.value,command_room_generation);
+                        result.value=self->room_meta_;
                     } else if (op=="cast" || op=="revive") {
                         if (self->route_.is_object() && same_role(route.value("role",Json()),self->route_["role"])) {
                             self->last_view_=action_snapshot(result.value,self->route_,self->last_view_);
@@ -332,7 +392,17 @@ private:
             // 后续任何步骤失败，都保留最后一份已验证归属；超时不推测迁移是否提交。
             Json established=route;
             try {
-                if (!config_.login_scene.empty() && route["role"].value("scene_id",std::string())!=config_.login_scene && !(config_.profile=="elemental" && route["role"]["scene_id"]==config_.arena_scene)) {
+                const auto desired_profile=config_.profile=="full" || config_.profile=="elemental" ? std::string("combat") : config_.profile;
+                if (route.contains("room_id") && (config_.profile=="elemental" || route.value("room_profile",std::string())!=desired_profile)) {
+                    auto leave=reference(route["role"]); leave["profile"]=desired_profile;
+                    leave["request_id"]="entry-profile-"+sha256_prefix(route["role"]["role_id"].get<std::string>())+"-"+std::to_string(route["role"]["session_epoch"].get<std::int64_t>());
+                    auto left=http_.call(config_.backend_url,"/v1/room_leave",leave,20);
+                    auto next=require_route(left);
+                    if (next.contains("room_id") || next["role"]["role_id"]!=route["role"]["role_id"] || next["role"]["session_epoch"]!=route["role"]["session_epoch"] ||
+                        next["role"]["owner_epoch"].get<std::int64_t>()<=route["role"]["owner_epoch"].get<std::int64_t>()) throw Failure("invalid room exit ownership transition");
+                    result=std::move(left); route=std::move(next); established=route;
+                }
+                if (!route.contains("room_id") && !config_.login_scene.empty() && route["role"].value("scene_id",std::string())!=config_.login_scene && !(config_.profile=="elemental" && route["role"]["scene_id"]==config_.arena_scene)) {
                     auto body=reference(route["role"]); body["target_scene_id"]=config_.login_scene;
                     body["request_id"]="entry-"+route["role"]["role_id"].get<std::string>()+"-"+std::to_string(route["role"]["session_epoch"].get<std::int64_t>());
                     result=http_.call(config_.backend_url,"/v1/transfer",body,20);
@@ -356,6 +426,12 @@ private:
         if (route.is_null()) throw Failure("login required");
         if (config_.profile=="elemental" && (op=="cast" || op=="enter_arena" || op=="leave_arena" || op=="restart_battle")) return perform_elemental(request,route);
         auto body=reference(route["role"]);
+        if (op.rfind("room_",0)==0) {
+            body["profile"]=config_.profile=="full" ? "combat" : config_.profile;
+            for (const auto* field:{"room_id","request_id","capacity","ready"})
+                if (request.contains(field)) body[field]=request[field];
+            return http_.call(config_.backend_url,"/v1/"+op,body,20);
+        }
         if (op=="view") return http_.call(route["scene_url"],"/v1/view",body);
         if (op=="skill_init") {
             if (config_.profile!="skill_lab") throw Failure("skill initialization is disabled");
@@ -427,7 +503,7 @@ private:
                         else try {
                             auto current=require_route(result);
                             // 在途旧 session 结果不能倒退刚完成的迁移。
-                            if (!same_role(current["role"],previous["role"])) { ++self->generation_; self->last_view_=nullptr; }
+                            if (!same_role(current["role"],previous["role"])) { ++self->generation_; self->last_view_=nullptr; self->reset_room_metadata(); }
                             self->route_=std::move(current); self->valid_until_=Clock::now()+std::chrono::seconds(4);
                         } catch (...) { self->begin_close(); }
                     } else if (!self->closing_) {
@@ -446,14 +522,14 @@ private:
     void start_view() {
         if (route_.is_null() || closing_ || ownership_transition_) return;
         view_busy_=true; view_wanted_=false;
-        auto route=route_; auto generation=generation_;
-        execute(pools_.views,[this,route] { return http_.call(route["scene_url"],"/v1/view",reference(route["role"])); },[self=shared_from_this(),route,generation](Result result) {
+        auto route=route_; auto generation=generation_; auto room_generation=room_world_generation_;
+        execute(pools_.views,[this,route] { return http_.call(route["scene_url"],"/v1/view",reference(route["role"])); },[self=shared_from_this(),route,generation,room_generation](Result result) {
             self->view_busy_=false;
             if (!self->closing_ && generation==self->generation_ && same_role(route["role"],self->route_.value("role",Json()))) {
                 if (result.error) { self->view_retry_at_=Clock::now()+std::chrono::seconds(1); self->view_wanted_=false; self->write(rejected({{"op","state"}},*result.error)); }
                 else try {
                     if (!same_role(result.value.value("self",Json()),self->route_["role"])) throw Failure("invalid service response");
-                    if (fresh_view(self->last_view_,result.value)) {
+                    if (self->remember_view_room(result.value,room_generation) && fresh_view(self->last_view_,result.value)) {
                         overlay_balance(result.value,self->route_["role"]); self->last_view_=result.value;
                         self->write(success({{"op","state"}},client_view(std::move(result.value),self->config_.profile)));
                     }

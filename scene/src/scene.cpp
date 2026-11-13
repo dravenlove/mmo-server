@@ -220,7 +220,8 @@ Json Scene::Npc::json() const {
         {"config_version", config_version}};
 }
 
-Scene::Scene(Config config) : config_(std::move(config)) {
+Scene::Scene(Config config) : config_(std::move(config)), entities_(registry_),
+    elemental_prepared_(registry_), npcs_(registry_), projectiles_(registry_), walls_(registry_) {
     if (config_.skill_lab_enabled && !config_.abilities_enabled) throw std::invalid_argument("skill lab requires ability mode");
     if (config_.abilities_enabled && !config_.combat_enabled) throw std::invalid_argument("abilities require combat mode");
     if (config_.elemental_enabled && config_.combat_enabled) throw std::invalid_argument("elemental mode must isolate persistent combat");
@@ -279,6 +280,60 @@ std::size_t Scene::player_count() const {
     std::size_t count=0;
     for (const auto& pair:entities_) if (pair.second.mode==Mode::Active && pair.second.connected && pair.second.lease_age<=3) ++count;
     return count;
+}
+
+std::optional<Json> Scene::role_state(const std::string& id, bool full_snapshot) const {
+    auto found = entities_.find(id);
+    if (found == entities_.end()) return std::nullopt;
+    const auto& entity = found->second;
+    const char* mode = entity.mode == Mode::Active ? "active" : entity.mode == Mode::Frozen ? "frozen" : "prepared";
+    const auto& role = entity.role;
+    const Json snapshot = full_snapshot ? role.json() : Json{{"role_id", role.role_id}, {"name", role.name}, {"scene_id", role.scene_id},
+                                                           {"owner_epoch", role.owner_epoch}, {"session_epoch", role.session_epoch}};
+    return Json{{"role", snapshot}, {"mode", mode}, {"connected", entity.connected},
+                {"lease_expired", entity.lease_age > 3}};
+}
+
+Json Scene::role_states(bool full_snapshot) const {
+    Json result = Json::array();
+    for (const auto& item : entities_) {
+        if (full_snapshot) result.push_back(*role_state(item.first));
+        else {
+            const auto& entity = item.second;
+            const auto& role = entity.role;
+            const char* mode = entity.mode == Mode::Active ? "active" : entity.mode == Mode::Frozen ? "frozen" : "prepared";
+            result.push_back({{"role", {{"role_id", role.role_id}, {"name", role.name}, {"scene_id", role.scene_id},
+                                        {"owner_epoch", role.owner_epoch}, {"session_epoch", role.session_epoch}}},
+                              {"mode", mode}, {"connected", entity.connected}, {"lease_expired", entity.lease_age > 3}});
+        }
+    }
+    return result;
+}
+
+Json Scene::ecs_stats() const {
+    const auto players = entities_.component_count(), prepared = elemental_prepared_.component_count();
+    const auto npcs = npcs_.component_count(), projectiles = projectiles_.component_count(), walls = walls_.component_count();
+    return {{"storage", "entt"}, {"players", players}, {"prepared_players", prepared}, {"npcs", npcs},
+            {"projectiles", projectiles}, {"walls", walls}, {"entities", players + prepared + npcs + projectiles + walls}};
+}
+
+void Scene::stop_combat() {
+    for (auto& item : entities_) {
+        auto& entity = item.second;
+        entity.dx = entity.dy = 0;
+        entity.input_age = 1;
+        clear_abilities(item.first);
+    }
+}
+
+void Scene::advance_leases(double dt) {
+    if (!std::isfinite(dt) || dt <= 0 || dt > 1) throw std::invalid_argument("invalid lease duration");
+    for (auto& item : entities_) {
+        auto& entity = item.second;
+        if (entity.mode != Mode::Active) continue;
+        entity.lease_age = std::min(4.0, entity.lease_age + dt);
+        entity.input_age = std::min(1.0, entity.input_age + dt);
+    }
 }
 
 void Scene::admit(const Role& role) {

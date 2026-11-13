@@ -101,11 +101,12 @@ Input parse_input(const std::string& text, const std::string& profile) {
     auto& in = result.data;
     if (duplicate || !in.is_object() || !in.contains("id") || !in["id"].is_string() || in["id"].get_ref<const std::string&>().empty() || in["id"].get_ref<const std::string&>().size() > 64 || !in.contains("op") || !in["op"].is_string() || in["op"].get_ref<const std::string&>().empty() || in["op"].get_ref<const std::string&>().size() > 24) throw Failure("invalid request");
     const auto op = in["op"].get<std::string>();
-    static const std::set<std::string> fields{"id","op","name","token","password","seq","dx","dy","target_scene_id","request_id","skill_id","target_id","x","y","scene_id","owner_epoch","element","definition","definition_version","expected_definition_version","world_epoch"};
+    static const std::set<std::string> fields{"id","op","name","token","password","seq","dx","dy","target_scene_id","request_id","skill_id","target_id","x","y","scene_id","owner_epoch","element","definition","definition_version","expected_definition_version","world_epoch","room_id","capacity","ready"};
     bool valid = true;
     for (auto it = in.begin(); it != in.end(); ++it) if (!fields.count(it.key())) valid = false;
-    for (const auto* key : {"name","token","password","target_scene_id","request_id","skill_id","target_id","scene_id","element","world_epoch"}) valid = valid && string_field(in,key);
-    for (const auto* key : {"seq","owner_epoch"}) valid = valid && numeric_field(in,key,true);
+    for (const auto* key : {"name","token","password","target_scene_id","request_id","skill_id","target_id","scene_id","element","world_epoch","room_id"}) valid = valid && string_field(in,key);
+    for (const auto* key : {"seq","owner_epoch","capacity"}) valid = valid && numeric_field(in,key,true);
+    if (in.contains("ready")) valid = valid && in["ready"].is_boolean();
     for (const auto* key : {"definition_version","expected_definition_version"}) {
         if (in.contains(key) && !in[key].is_null())
             valid = valid && in[key].is_number_integer() && (in[key].is_number_unsigned() || in[key].get<std::int64_t>() >= 0);
@@ -156,9 +157,28 @@ Json client_view(Json view,const std::string& profile) {
     }
     return view;
 }
+bool valid_room_metadata(const Json& room) {
+    if (!room.is_object() || !room.contains("room_id") || !room["room_id"].is_string() ||
+        !room.contains("world_epoch") || !room["world_epoch"].is_string() ||
+        !room.contains("revision") || !room["revision"].is_number_integer()) return false;
+    const auto& id=room["room_id"].get_ref<const std::string&>();
+    const auto& world=room["world_epoch"].get_ref<const std::string&>();
+    if (id.empty() || id.size()>128 || world.empty() || world.size()>256) return false;
+    if (!room["revision"].is_number_unsigned() && room["revision"].get<std::int64_t>()<0) return false;
+    return !room.contains("members") || room["members"].is_array();
+}
 bool fresh_view(const Json& previous,const Json& next) {
     if (!next.is_object() || !next.contains("self")) return false;
     if (previous.is_null() || !same_role(previous.value("self",Json()),next["self"])) return true;
+    const auto before=previous.find("room"), after=next.find("room");
+    if (after!=next.end()) {
+        if (!valid_room_metadata(*after)) return false;
+        if (before==previous.end()) return true;
+        if (!valid_room_metadata(*before) || (*before)["room_id"]!=(*after)["room_id"]) return false;
+        // movement没有顶层world_epoch；房间世界代次允许Worker重启后Tick归零。
+        if ((*before)["world_epoch"]!=(*after)["world_epoch"]) return true;
+        if ((*after)["revision"].get<std::uint64_t>()<(*before)["revision"].get<std::uint64_t>()) return false;
+    } else if (before!=previous.end()) return false;
     if (previous.value("world_epoch",std::string()) != next.value("world_epoch",std::string()) && !previous.value("world_epoch",std::string()).empty() && !next.value("world_epoch",std::string()).empty()) return true;
     if (next.value("tick",std::uint64_t(0)) < previous.value("tick",std::uint64_t(0))) return false;
     return revision(next["self"]) >= revision(previous["self"]);
@@ -191,6 +211,10 @@ Json rejected(const Json& input,const Failure& error) {
     return out;
 }
 bool permitted(const std::string& profile,const std::string& operation) {
+    if (operation.rfind("room_",0) == 0) {
+        static const std::set<std::string> rooms{"room_create","room_list","room_join","room_leave","room_status","room_ready","room_start","room_finish"};
+        return profile != "elemental" && rooms.count(operation);
+    }
     if (profile == "full") return true;
     if (operation == "register" || operation == "login" || operation == "account_register" || operation == "account_login" || operation == "account_bind" || operation == "view" || operation == "ping" || operation == "move") return true;
     if (profile == "abilities" || profile == "skill_lab") return operation == "cast" || operation == "revive" || (profile == "skill_lab" && operation == "skill_init");

@@ -31,14 +31,18 @@ inline Json http_post(const std::string& url, const std::string& path, const Jso
     if ((url.compare(0, 7, "http://") != 0 && url.compare(0, 8, "https://") != 0) ||
         url.find_first_of("?#@") != std::string::npos)
         throw Error(502, "invalid internal service URL");
-    httplib::Client client(url);
+    const auto slash = url.find('/', url.find("://") + 3);
+    const auto origin = url.substr(0, slash);
+    auto prefix = slash == std::string::npos ? std::string{} : url.substr(slash);
+    while (!prefix.empty() && prefix.back() == '/') prefix.pop_back();
+    httplib::Client client(origin);
     client.set_connection_timeout(timeout_ms / 1000, (timeout_ms % 1000) * 1000);
     client.set_read_timeout(timeout_ms / 1000, (timeout_ms % 1000) * 1000);
     client.set_write_timeout(timeout_ms / 1000, (timeout_ms % 1000) * 1000);
     client.set_max_timeout(std::chrono::milliseconds(timeout_ms));
     client.set_follow_location(false);
     client.set_payload_max_length(2 * 1024 * 1024);
-    auto response = client.Post(path, {{"X-Internal-Token", token}}, body.dump(), "application/json");
+    auto response = client.Post(prefix + path, {{"X-Internal-Token", token}}, body.dump(), "application/json");
     if (!response) throw Error(502, "service unavailable or timed out; retry with the same operation id");
     Json result;
     try { result = Json::parse(response->body); }

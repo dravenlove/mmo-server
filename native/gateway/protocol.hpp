@@ -38,6 +38,7 @@ Json reference(const Json& role);
 Json client_role(Json role, const std::string& profile);
 Json client_view(Json view, const std::string& profile);
 bool fresh_view(const Json& previous, const Json& next);
+bool valid_room_metadata(const Json& room);
 void overlay_balance(Json& view, const Json& role);
 Json action_snapshot(Json& output, const Json& route, const Json& previous);
 Json success(const Json& input, Json data);

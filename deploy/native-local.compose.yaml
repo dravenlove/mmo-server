@@ -17,13 +17,14 @@ x-environment: &environment
 services:
   scene:
     <<: *common
-    entrypoint: [/usr/local/bin/scene-server]
+    entrypoint: [/usr/local/bin/native-worker]
     environment:
       <<: *environment
       SCENE_ID: scene-skills
       SCENE_MODE: skill_lab
       SCENE_HOST: 0.0.0.0
       SCENE_PORT: "9006"
+      ROOM_SCRIPT_MANIFEST: /app/gameplay/manifest.json
     healthcheck:
       test: [CMD, curl, --fail, --silent, --max-time, "2", http://127.0.0.1:9006/healthz]
       interval: 3s
@@ -53,6 +54,7 @@ services:
       BACKEND_DB_DRIVER: sqlite
       BACKEND_DB: /app/data/mmo.db
       AUTH_URL: http://auth:8082
+      ROOM_WORKER_URL: http://scene:9006
       SCENES: scene-skills=http://scene:9006
     volumes: [native-roles:/app/data]
     depends_on:

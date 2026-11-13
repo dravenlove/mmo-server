@@ -1,4 +1,5 @@
 #include "game_service/service.hpp"
+#include "rooms_tests.hpp"
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -253,7 +254,10 @@ int main(int argc, char** argv) {
     mysql_tests = argc > 1 && std::string(argv[1]) == "--mysql";
     try {
         if (argc == 3 && std::string(argv[1]) == "--legacy-fixture") legacy_fixture(argv[2]);
-        else { account_and_checkpoint(); migration_paths(); external_auth_identity_and_lock_boundary(); }
+        else {
+            account_and_checkpoint(); migration_paths(); external_auth_identity_and_lock_boundary();
+            Fixture rooms; rooms.service.reset(); native::game::test::room_tests(rooms.config.database);
+        }
         std::cout << "native game invariants passed\n"; return 0;
     }
     catch (const std::exception& e) { std::cerr << "native game tests failed: " << e.what() << '\n'; return 1; }

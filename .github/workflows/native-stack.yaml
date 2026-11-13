@@ -32,7 +32,7 @@ jobs:
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends cmake pkg-config libboost-system-dev libssl-dev libsqlite3-dev libmariadb-dev libcrypt-dev mysql-server-core-8.0 mysql-client-core-8.0
+          sudo apt-get install -y --no-install-recommends cmake pkg-config libboost-system-dev libssl-dev libsqlite3-dev libmariadb-dev libcrypt-dev liblua5.4-dev mysql-server-core-8.0 mysql-client-core-8.0
       - name: Verify opt-in deployment configuration
         run: python3 scripts/check_native_compose.py
       - name: Build and verify native services
@@ -41,14 +41,12 @@ jobs:
           cmake --build build/native-ci --parallel 2
           ctest --test-dir build/native-ci --output-on-failure
           build/native-ci/account/native-account-unit --emit-bcrypt-fixture | go run native/account/tests/go_compat/hash_compat.go
-          cmake -S scene -B build/scene-ci -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/scene-ci --parallel 2
-          ctest --test-dir build/scene-ci --output-on-failure
-          python3 scripts/test_native_stack.py --build build/native-ci --scene build/scene-ci/scene-server
+          python3 scripts/test_native_stack.py --build build/native-ci --scene build/native-ci/scene-core/scene-server
           python3 scripts/test_native_mysql.py --build build/native-ci
+          python3 scripts/test_room_stack.py --build build/native-ci
       - name: Run legacy protocol regressions against C++ replacements
         run: |
-          python3 scripts/test_native_legacy.py --build build/native-ci --scene build/scene-ci/scene-server
+          python3 scripts/test_native_legacy.py --build build/native-ci --scene build/native-ci/room/native-worker
           go test ./...
       - name: Build runtime image
         run: docker build --progress plain -f Dockerfile.native -t mmo/native:ci --label "org.opencontainers.image.revision=$GITHUB_SHA" --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" .
@@ -60,7 +58,7 @@ jobs:
           REQUESTED_TAG: ${{ inputs.image_tag }}
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          IMAGE_TAG="${REQUESTED_TAG:-cpp-core-${GITHUB_SHA:0:12}}"
+          IMAGE_TAG="${REQUESTED_TAG:-cpp-room-${GITHUB_SHA:0:12}}"
           [[ "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] || exit 2
           # 复用现有公开包的权限，C++使用独立不可变标签，不覆盖旧Go镜像。
           image="ghcr.io/${GITHUB_REPOSITORY,,}/backend:$IMAGE_TAG"

@@ -18,6 +18,19 @@ import urllib.request
 from smoke import free_port, http
 
 
+def unique_ports(names):
+    ports = {}
+    for name in names:
+        for _ in range(100):
+            candidate = free_port()
+            if candidate not in ports.values():
+                ports[name] = candidate
+                break
+        else:
+            raise AssertionError("could not allocate distinct fixture ports")
+    return ports
+
+
 class WebSocketClosed(Exception):
     def __init__(self, code):
         self.code = code
@@ -58,28 +71,38 @@ class WebSocket:
         self.socket.sendall(head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
     def receive(self):
-        head = self.reader.read(2)
-        if len(head) != 2:
-            raise AssertionError("WebSocket closed unexpectedly")
-        flags, size = head
-        assert not flags & 0x70, "unexpected extensions on non-negotiated connection"
-        assert not size & 0x80, "server frame must not be masked"
-        size &= 127
-        if size == 126:
-            size = struct.unpack("!H", self.reader.read(2))[0]
-        elif size == 127:
-            size = struct.unpack("!Q", self.reader.read(8))[0]
-        assert size <= 2 * 1024 * 1024
-        data = self.reader.read(size)
-        opcode = flags & 15
-        if opcode == 9:
-            self.frame(data, 10)
-            return self.receive()
-        if opcode == 8:
-            raise WebSocketClosed(struct.unpack("!H", data[:2])[0] if len(data) >= 2 else 1005)
-        assert opcode == 1, ("unexpected server opcode", opcode)
-        assert len(data) == size
-        return json.loads(data)
+        # Beast可把一条较大的文本消息拆成text+continuation帧；JSON边界是FIN而非首帧。
+        fragments = []
+        total = 0
+        while True:
+            head = self.reader.read(2)
+            if len(head) != 2:
+                raise AssertionError("WebSocket closed unexpectedly")
+            flags, size = head
+            assert not flags & 0x70, "unexpected extensions on non-negotiated connection"
+            assert not size & 0x80, "server frame must not be masked"
+            size &= 127
+            if size == 126:
+                size = struct.unpack("!H", self.reader.read(2))[0]
+            elif size == 127:
+                size = struct.unpack("!Q", self.reader.read(8))[0]
+            assert size <= 2 * 1024 * 1024
+            data = self.reader.read(size)
+            assert len(data) == size
+            opcode = flags & 15
+            if opcode in (8, 9, 10):
+                assert flags & 0x80 and size <= 125, "invalid control frame"
+                if opcode == 9:
+                    self.frame(data, 10)
+                elif opcode == 8:
+                    raise WebSocketClosed(struct.unpack("!H", data[:2])[0] if len(data) >= 2 else 1005)
+                continue
+            assert opcode == (0 if fragments else 1), ("unexpected server opcode", opcode)
+            fragments.append(data)
+            total += size
+            assert total <= 2 * 1024 * 1024
+            if flags & 0x80:
+                return json.loads(b"".join(fragments))
 
     def request(self, op, ok=True, **fields):
         self.counter += 1
@@ -113,8 +136,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="mmo-native-stack-") as directory:
         work = Path(directory)
         common = dict(inherited, INTERNAL_TOKEN=secrets.token_hex(32))
-        ports = {key: free_port() for key in ("auth", "backend", "scene", "tcp", "ws", "health")}
-        assert len(set(ports.values())) == len(ports)
+        ports = unique_ports(("auth", "backend", "scene", "tcp", "ws", "health"))
         urls = {key: f"http://127.0.0.1:{port}" for key, port in ports.items()}
         children, logs, peers = {}, [], []
 

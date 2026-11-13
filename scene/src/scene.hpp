@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -10,6 +11,7 @@
 #include <utility>
 #include <nlohmann/json.hpp>
 #include "elemental.hpp"
+#include "ecs_storage.hpp"
 
 namespace mmo {
 using Json = nlohmann::json;
@@ -34,6 +36,8 @@ struct Config {
     std::string elemental_arena_id = "scene-elemental-arena";
     bool trace_movement = false;
     Json combat_config; // 未设置时使用内置数值；启动文件由 HTTP 外层读取。
+    // 受信任服务端脚本仅提出效果计划；调用前完成验证，调用后才提交资源和实例。
+    std::function<Json(const Json&)> ability_planner;
 };
 
 struct Role {
@@ -56,10 +60,21 @@ struct Role {
 class Scene {
 public:
     explicit Scene(Config config);
+    Scene(const Scene&) = delete;
+    Scene& operator=(const Scene&) = delete;
+    Scene(Scene&&) = delete;
+    Scene& operator=(Scene&&) = delete;
     Json execute(const std::string& path, const Json& request);
     void step(double dt);
+    void advance_leases(double dt);
     std::size_t player_count() const;
+    std::size_t role_count() const { return entities_.size(); }
     std::uint64_t tick() const { return tick_; }
+    const std::string& world_epoch() const { return world_epoch_; }
+    std::optional<Json> role_state(const std::string& id, bool full_snapshot = true) const;
+    Json role_states(bool full_snapshot = true) const;
+    Json ecs_stats() const;
+    void stop_combat();
 
 private:
     enum class Mode { Active, Frozen, Prepared };
@@ -72,6 +87,8 @@ private:
         Json json() const;
     };
     struct Entity {
+        static constexpr bool in_place_delete = true;
+        static constexpr std::size_t page_size = 64;
         Role role;
         Mode mode = Mode::Active;
         std::string transfer_id;
@@ -91,6 +108,8 @@ private:
         std::map<std::string, double> skill_cooldowns;
     };
     struct Npc {
+        static constexpr bool in_place_delete = true;
+        static constexpr std::size_t page_size = 64;
         std::string id, name, kind, target_id;
         double x = 0, y = 0, spawn_x = 0, spawn_y = 0;
         int hp = 80, max_hp = 80, damage = 8;
@@ -101,6 +120,8 @@ private:
         Json json() const;
     };
     struct Projectile {
+        static constexpr bool in_place_delete = true;
+        static constexpr std::size_t page_size = 64;
         std::string id, owner_id;
         std::string skill_id = "arc_bolt";
         std::int64_t owner_epoch = 0, session_epoch = 0;
@@ -111,6 +132,8 @@ private:
         Json json() const;
     };
     struct Wall {
+        static constexpr bool in_place_delete = true;
+        static constexpr std::size_t page_size = 64;
         std::string id, owner_id;
         std::string skill_id = "stone_wall";
         std::int64_t owner_epoch = 0, session_epoch = 0;
@@ -120,17 +143,23 @@ private:
         Json json() const;
     };
     Config config_;
-    std::map<std::string, Entity> entities_;
+    struct PlayerCategory {};
+    struct PreparedPlayerCategory {};
+    struct NpcCategory {};
+    struct ProjectileCategory {};
+    struct WallCategory {};
+    entt::registry registry_;
+    EcsStorage<Entity, PlayerCategory> entities_;
     // 同进程的自由区/个人副本迁移保留冻结源，提交后再交换候选对象。
-    std::map<std::string, Entity> elemental_prepared_;
+    EcsStorage<Entity, PreparedPlayerCategory> elemental_prepared_;
     // 墓碑不能按普通缓存淘汰：淘汰后可能接受迟到的旧入场请求。
     std::map<std::string, std::int64_t> removed_epochs_;
     std::uint64_t tick_ = 0;
-    std::map<std::string, Npc> npcs_;
+    EcsStorage<Npc, NpcCategory> npcs_;
     std::deque<Json> events_;
     std::uint64_t next_event_id_ = 0;
-    std::map<std::string, Projectile> projectiles_;
-    std::map<std::string, Wall> walls_;
+    EcsStorage<Projectile, ProjectileCategory> projectiles_;
+    EcsStorage<Wall, WallCategory> walls_;
     std::uint64_t next_object_id_ = 0;
     std::uint64_t next_skill_definition_id_ = 0;
     std::string world_epoch_;

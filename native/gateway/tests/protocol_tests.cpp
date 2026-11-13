@@ -27,6 +27,17 @@ int main() {
         require(!fresh_view(old,next),"old tick accepted");
         next["world_epoch"]="new";
         require(fresh_view(old,next),"new scene epoch rejected");
+        Json lobby{{"self",role(5)},{"tick",700},{"room",{{"room_id","arena"},{"world_epoch","room-old"},{"revision",8},{"state","lobby"}}}};
+        auto room_view=lobby; room_view["room"]["revision"]=7;
+        require(!fresh_view(lobby,room_view),"equal-Tick room metadata regressed");
+        room_view["room"]["revision"]=9;
+        require(fresh_view(lobby,room_view),"new room revision required a gameplay Tick");
+        room_view["room"]["world_epoch"]="room-new"; room_view["room"]["revision"]=0; room_view["tick"]=0;
+        require(fresh_view(lobby,room_view),"movement room world restart could not reset Tick");
+        room_view["room"]["revision"]=-1;
+        require(!valid_room_metadata(room_view["room"]),"negative room revision accepted");
+        room_view["room"]["revision"]=1.5;
+        require(!valid_room_metadata(room_view["room"]),"fractional room revision accepted");
         Json route{{"role",a},{"scene_url","http://127.0.0.1:9001"}};
         Json output{{"accepted",true},{"role",role(4)}};
         auto saved=action_snapshot(output,route,old);

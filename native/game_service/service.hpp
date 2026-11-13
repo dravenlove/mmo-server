@@ -3,16 +3,21 @@
 #include "persistence/store.hpp"
 #include <map>
 #include <mutex>
+#include <condition_variable>
+#include <deque>
+#include <thread>
+#include <chrono>
 
 namespace native::game {
 struct Config {
-    std::string token, auth_url, default_scene;
+    std::string token, auth_url, default_scene, room_worker_url;
     std::map<std::string, std::string> scenes;
     db::Config database;
 };
 class Service {
 public:
     explicit Service(Config config);
+    ~Service();
     Json execute(const std::string& operation, const Json& request);
     void health();
     void recover();
@@ -24,9 +29,15 @@ private:
     Config config_;
     db::Store db_;
     std::mutex mutex_;
+    struct PersistedAck { std::string url; Json role; unsigned attempts = 0; std::chrono::steady_clock::time_point due{}; };
+    std::mutex ack_mutex_;
+    std::condition_variable ack_wake_;
+    std::deque<PersistedAck> ack_queue_;
+    bool ack_stopping_ = false;
+    std::thread ack_thread_;
     Json role(const std::string& id);
     Json validate_session(const Json& req);
-    Json route(const Json& role) const;
+    Json route(const Json& role);
     Json scene(const std::string& id, const std::string& operation, const Json& request);
     Json auth(const std::string& operation, const Json& request);
     Json identity(const std::string& operation, const Json& request);
@@ -41,6 +52,18 @@ private:
     Json checkpoint(const Json& request);
     Json claim(const Json& request);
     Json transfer(const Json& request);
+    void room_schema();
+    Json room_request(const std::string& operation, const Json& request);
+    Json room_record(const std::string& id);
+    Json ensure_room(const std::string& id);
+    void restore_room_routes();
+    bool room_scene(const std::string& id) const;
+    void recover_finished_room(Json& role, const std::string& recovery_key = {});
+    void start_room_acks();
+    void queue_room_ack(const Json& role);
+    void persist_finished_members(const std::string& room_id);
+    void bind_room_world(Json& role, const Json& metadata, bool rotate_session);
+    Json drain_rooms(const Json& request);
     std::optional<Migration> migration(const std::string& role_id, const std::optional<std::string>& request_id = {});
     Migration begin_migration(const Json& role, const Json& request);
     void commit_migration(Migration& migration);

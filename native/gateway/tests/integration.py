@@ -38,6 +38,13 @@ class Fixture:
         self.statuses = {}
         self.overrides = {}
         self.transfer_error_commits = False
+        self.room_leave_error_commits = False
+        self.route_fields = {}
+        self.room = None
+        self.other_rooms = {}
+        self.after_leave_room = None
+        self.fixed_tick = None
+        self.omit_world = False
         self.scene = self.server("scene")
         self.backend = self.server("backend")
 
@@ -70,6 +77,9 @@ class Fixture:
                 with fixture.lock:
                     fixture.calls.append((kind, self.path, body))
                     role = json.loads(json.dumps(fixture.role))
+                    room = json.loads(json.dumps(fixture.room))
+                    fixed_tick = fixture.fixed_tick
+                    omit_world = fixture.omit_world
                     delay = fixture.delays.get(self.path, 0)
                     if kind == "backend" and self.path == "/v1/transfer":
                         fixture.changing = True
@@ -81,6 +91,12 @@ class Fixture:
                             fixture.role["scene_id"] = body["target_scene_id"]
                             fixture.role["owner_epoch"] += 1
                             fixture.changing = False
+                    if kind == "backend" and self.path == "/v1/room_leave" and fixture.room_leave_error_commits:
+                        with fixture.lock:
+                            fixture.role["scene_id"] = "scene-origin"
+                            fixture.role["owner_epoch"] += 1
+                            fixture.route_fields = {}
+                            fixture.room = json.loads(json.dumps(fixture.after_leave_room))
                     self.respond(fixture.statuses[self.path], {"error": "isolated fault injection"})
                     return
                 if self.path in fixture.overrides:
@@ -91,7 +107,7 @@ class Fixture:
                         if self.path == "/v1/session" and fixture.session_status != 200:
                             self.respond(fixture.session_status, {"error": "stale session"})
                         else:
-                            self.respond(200, {"role": role, "scene_url": fixture.scene_url})
+                            self.respond(200, fixture.route(role))
                     elif self.path in ("/v1/account_register", "/v1/account_login"):
                         assert body == {"name": "controlled", "password": "test-password"}
                         self.respond(200, {"token": "a" * 64, "role_id": role["role_id"], "expires_at_unix_ms": int(time.time()*1000)+86400000})
@@ -112,7 +128,31 @@ class Fixture:
                             fixture.role["owner_epoch"] += 1
                             fixture.changing = False
                             role = json.loads(json.dumps(fixture.role))
-                        self.respond(200, {"role": role, "scene_url": fixture.scene_url})
+                        self.respond(200, fixture.route(role))
+                    elif self.path == "/v1/room_leave":
+                        assert body["profile"] in ("movement", "abilities", "skill_lab", "combat")
+                        assert len(body["request_id"]) <= 128
+                        with fixture.lock:
+                            fixture.role["scene_id"] = "scene-origin"
+                            fixture.role["owner_epoch"] += 1
+                            fixture.route_fields = {}
+                            fixture.room = json.loads(json.dumps(fixture.after_leave_room))
+                            role = json.loads(json.dumps(fixture.role))
+                        self.respond(200, fixture.route(role))
+                    elif self.path in ("/v1/room_ready", "/v1/room_start", "/v1/room_finish", "/v1/room_status"):
+                        with fixture.lock:
+                            target = body.get("room_id", fixture.room["room_id"])
+                            metadata = fixture.room if target == fixture.room["room_id"] else fixture.other_rooms[target]
+                            if self.path != "/v1/room_status":
+                                metadata["revision"] += 1
+                            if self.path == "/v1/room_ready":
+                                metadata["members"][0]["ready"] = body["ready"]
+                            elif self.path == "/v1/room_start":
+                                metadata["state"] = "playing"
+                            elif self.path == "/v1/room_finish":
+                                metadata["state"] = "finished"
+                            output = json.loads(json.dumps(metadata))
+                        self.respond(200, output)
                     else:
                         self.respond(404, {"error": "unknown backend route"})
                 else:
@@ -125,11 +165,17 @@ class Fixture:
                             self.respond(409, {"error": "role is not active"})
                             return
                         role["coins"] = -100  # Backend 才是金币的事实来源。
-                        self.respond(200, {"self": role, "players": [role], "scene_id": role["scene_id"],
-                                           "tick": int(time.monotonic()*20), "world_epoch": "test-epoch",
+                        output = {"self": role, "players": [role], "scene_id": role["scene_id"],
+                                           "tick": fixed_tick if fixed_tick is not None else int(time.monotonic()*20),
                                            "event_cursor": 9007199254740993,
                                            "events": [{"id": 9007199254740993, "type": "test"}],
-                                           "projectiles": [], "walls": [], "skill_cooldowns": {}})
+                                           "projectiles": [], "walls": [], "skill_cooldowns": {}}
+                        if not omit_world:
+                            output["world_epoch"] = room["world_epoch"] if room is not None else "test-epoch"
+                        if room is not None:
+                            room.pop("members", None)  # Worker自动view只有房间摘要；完整成员信息来自控制ACK。
+                            output["room"] = room
+                        self.respond(200, output)
                     elif self.path == "/v1/move":
                         with fixture.lock:
                             fixture.role["x"] += body["dx"]
@@ -158,6 +204,10 @@ class Fixture:
     @property
     def scene_url(self):
         return f"http://127.0.0.1:{self.scene.server_port}"
+
+    def route(self, role):
+        extra = self.route_fields if self.route_fields.get("room_id") == role["scene_id"] else {}
+        return dict(role=role, scene_url=self.scene_url, **extra)
 
     @property
     def backend_url(self):
@@ -303,6 +353,197 @@ def wait_until(predicate, message, seconds=5):
             return
         time.sleep(.03)
     raise AssertionError(message)
+
+
+def room_metadata(room_id="room-current", world="room-world", revision=1, state="lobby"):
+    return dict(room_id=room_id, world_epoch=world, revision=revision, state=state,
+                members=[dict(role_id="controlled-player", ready=False)], legacy=False)
+
+
+def view_count(fixture):
+    with fixture.lock:
+        return sum(call[1] == "/v1/view" for call in fixture.calls)
+
+
+def next_room_state(client):
+    for _ in range(100):
+        value = client.read()
+        if value.get("op") == "state":
+            assert value.get("ok"), value
+            return value["data"]
+    raise AssertionError("room state missing")
+
+
+def room_regressions(executable):
+    checks = 0
+    # 同一Scene Tick不前进时，控制ACK仍必须推进房间ready/state；迟到旧auto不可回退。
+    fixture = Fixture()
+    fixture.role["scene_id"] = "room-current"
+    fixture.route_fields = dict(room_id="room-current", room_profile="movement")
+    fixture.room = room_metadata()
+    fixture.fixed_tick = 700
+    fixture.omit_world = True  # 实际movement Scene没有顶层world_epoch。
+    fixture.delays["/v1/view"] = .35
+    gateway = Gateway(executable, fixture, "movement")
+    client = Client(gateway.ws, ws=True)
+    try:
+        assert client.exchange("login", token="old-token")["ok"]
+        for op, fields, expected_state in (("room_ready", dict(ready=True), "lobby"),
+                                           ("room_start", {}, "playing"), ("room_finish", {}, "finished")):
+            with fixture.lock:
+                before = sum(call[1] == "/v1/view" for call in fixture.calls)
+                fixture.delays["/v1/view"] = .35
+            if op == "room_ready":
+                wait_until(lambda: view_count(fixture) > 0, "initial room view did not start")
+            else:
+                wait_until(lambda: view_count(fixture) > before, "delayed room view did not start")
+            reply = client.exchange(op, request_id="metadata-"+op, **fields)
+            assert reply["ok"] and reply["data"]["state"] == expected_state
+            revision = reply["data"]["revision"]
+            fixture.delays["/v1/view"] = 0
+            for _ in range(3):
+                state = next_room_state(client)
+                assert state["tick"] == 700
+                assert state["room"]["revision"] >= revision and state["room"]["state"] == expected_state
+                assert state["room"]["members"][0]["ready"] is True, "summary view erased acknowledged ready flag"
+            if op == "room_start":
+                fixture.other_rooms["room-other"] = room_metadata("room-other", "other-world", 90, "playing")
+                other = client.exchange("room_finish", room_id="room-other", request_id="finish-other")
+                assert other["ok"] and other["data"]["room_id"] == "room-other"
+                current = client.exchange("view")
+                assert current["ok"] and current["data"]["room"]["room_id"] == "room-current"
+                assert current["data"]["room"]["state"] == "playing", "other-room finish overwrote current room metadata"
+            checks += 4
+        # 新Worker世界没有顶层world_epoch，也必须允许Tick与房间revision归零。
+        with fixture.lock:
+            fixture.room = room_metadata(world="restarted-world", revision=0)
+            fixture.fixed_tick = 0
+        restarted = next_room_state(client)
+        while restarted["room"]["world_epoch"] != "restarted-world":
+            restarted = next_room_state(client)
+        assert restarted["tick"] == 0 and restarted["room"]["revision"] == 0
+        stale = dict(self=fixture.role, players=[fixture.role], scene_id="room-current", tick=900,
+                     room=room_metadata(world="room-world", revision=999, state="playing"))
+        fixture.overrides["/v1/view"] = stale
+        offset = len(client.events)
+        explicit = client.exchange("view")
+        assert explicit["ok"] and explicit["data"]["room"]["world_epoch"] == "restarted-world"
+        assert explicit["data"]["tick"] == 0, "retired room world replaced movement state"
+        assert all(event.get("data", {}).get("room", {}).get("world_epoch") != "room-world" for event in client.events[offset:] if event.get("op") == "state")
+        del fixture.overrides["/v1/view"]
+        # 路由改变后不沿用旧房间的版本或退休世界集合。
+        fixture.after_leave_room = room_metadata("scene-origin", "room-world", 0, "playing")
+        assert client.exchange("room_leave", request_id="leave-metadata-room")["ok"]
+        returned = client.exchange("view")
+        assert returned["ok"] and returned["data"]["room"]["room_id"] == "scene-origin"
+        assert returned["data"]["room"]["world_epoch"] == "room-world" and returned["data"]["room"]["revision"] == 0
+        checks += 5
+    finally:
+        client.close(); gateway.close(); fixture.close()
+
+    # 首次房间元数据只由ACK取得：ACK之前发出的陌生旧epoch不能被当作第二次重启。
+    fixture = Fixture()
+    fixture.role["scene_id"] = "room-current"
+    fixture.route_fields = dict(room_id="room-current", room_profile="movement")
+    fixture.room = room_metadata(world="unseen-old-world")
+    fixture.fixed_tick = 900; fixture.omit_world = True; fixture.delays["/v1/view"] = .35
+    gateway = Gateway(executable, fixture, "movement")
+    client = Client(gateway.ws, ws=True)
+    try:
+        assert client.exchange("login", token="old-token")["ok"]
+        wait_until(lambda: view_count(fixture) > 0, "old-world first view did not start")
+        with fixture.lock:
+            fixture.room = room_metadata(world="ack-new-world")
+            fixture.fixed_tick = 0
+        ack = client.exchange("room_ready", ready=True, request_id="new-world-ready")
+        assert ack["ok"] and ack["data"]["world_epoch"] == "ack-new-world"
+        fixture.delays["/v1/view"] = 0
+        state = next_room_state(client)
+        assert state["room"]["world_epoch"] == "ack-new-world" and state["tick"] == 0
+        assert state["room"]["members"][0]["ready"] is True
+        checks += 3
+    finally:
+        client.close(); gateway.close(); fixture.close()
+
+    # 慢显式view期间，别的参与者改变ready；新auto先回，显式响应也不能倒退。
+    fixture = Fixture()
+    fixture.role["scene_id"] = "room-current"
+    fixture.route_fields = dict(room_id="room-current", room_profile="movement")
+    fixture.room = room_metadata(); fixture.fixed_tick = 0; fixture.omit_world = True
+    fixture.delays["/v1/view"] = 1.7
+    gateway = Gateway(executable, fixture, "movement", state_hz=1)
+    client = Client(gateway.ws, ws=True)
+    try:
+        assert client.exchange("login", token="old-token")["ok"]
+        client.send(dict(id="explicit-room-old", op="view"))
+        wait_until(lambda: view_count(fixture) > 0, "explicit room view did not start")
+        with fixture.lock:
+            fixture.room["revision"] = 2
+            fixture.room["members"][0]["ready"] = True
+            fixture.delays["/v1/view"] = 0
+        saw_new = False
+        while True:
+            reply = client.read()
+            if reply.get("op") == "state" and reply.get("ok"):
+                saw_new = reply["data"]["room"]["revision"] == 2
+            if reply.get("id") == "explicit-room-old":
+                assert saw_new and reply["ok"] and reply["data"]["room"]["revision"] == 2
+                break
+        checks += 2
+    finally:
+        client.close(); gateway.close(); fixture.close()
+    return checks
+
+
+def profile_reconnect_regressions(executable):
+    checks = 0
+    for profile, old_profile, leave in (("movement", "skill_lab", True), ("elemental", "combat", True), ("skill_lab", "skill_lab", False)):
+        fixture = Fixture()
+        fixture.role["scene_id"] = "room-existing"
+        fixture.route_fields = dict(room_id="room-existing", room_profile=old_profile)
+        gateway = Gateway(executable, fixture, profile, login_scene="scene-test")
+        client = Client(gateway.ws, ws=True)
+        try:
+            reply = client.exchange("login", token="old-token")
+            assert reply["ok"] and reply["data"]["role_id"] == "controlled-player" and reply["data"]["coins"] == 91
+            calls = [call for call in fixture.calls if call[0] == "backend"]
+            assert calls[0][1:] == ("/v1/login", {"token": "old-token"})
+            if leave:
+                operations = [call[1] for call in calls[:3]]
+                assert operations == ["/v1/login", "/v1/room_leave", "/v1/transfer"], operations
+                assert reply["data"]["scene_id"] == "scene-test" and reply["data"]["owner_epoch"] == 5
+                assert calls[1][2]["profile"] == ("combat" if profile == "elemental" else profile)
+                assert calls[1][2]["request_id"].startswith("entry-profile-")
+            else:
+                assert reply["data"]["scene_id"] == "room-existing" and reply["data"]["owner_epoch"] == 3
+                assert not any(call[1] in ("/v1/room_leave", "/v1/transfer") for call in calls)
+            checks += 3
+        finally:
+            client.close(); gateway.close(); fixture.close()
+    for committed in (False, True):
+        fixture = Fixture()
+        fixture.role["scene_id"] = "room-existing"
+        fixture.route_fields = dict(room_id="room-existing", room_profile="skill_lab")
+        fixture.statuses["/v1/room_leave"] = 503
+        fixture.room_leave_error_commits = committed
+        gateway = Gateway(executable, fixture, "movement", login_scene="scene-test")
+        client = Client(gateway.ws, ws=True)
+        try:
+            reply = client.exchange("login", token="old-token")
+            assert not reply["ok"] and reply["status"] == 503
+            client.close()
+            wait_until(lambda: any(call[1] == "/v1/disconnect" for call in fixture.calls), "profile leave failure leaked established session")
+            cleanup = [call[2] for call in fixture.calls if call[1] == "/v1/disconnect"][-1]
+            assert cleanup == dict(role_id="controlled-player", owner_epoch=3, session_epoch=7)
+            if committed:
+                assert fixture.role["scene_id"] == "scene-origin" and fixture.role["owner_epoch"] == 4
+                assert not fixture.saved and not fixture.disconnects, "unknown profile leave cleanup affected a newer owner"
+            else:
+                wait_until(lambda: bool(fixture.saved), "uncommitted profile leave did not preserve source state")
+            checks += 2
+        finally:
+            client.close(); gateway.close(); fixture.close()
+    return checks
 
 
 def main(executable):
@@ -516,7 +757,9 @@ def main(executable):
         client.close()
         gateway.close()
         fixture.close()
-    print(f"native gateway integration passed ({checks} checks; 5 profiles, TCP and direct C++ WebSocket)")
+    checks += room_regressions(executable)
+    checks += profile_reconnect_regressions(executable)
+    print(f"native gateway integration passed ({checks} checks; 5 profiles, TCP and direct C++ WebSocket, room metadata and profile reconnect fences)")
 
 
 if __name__ == "__main__":

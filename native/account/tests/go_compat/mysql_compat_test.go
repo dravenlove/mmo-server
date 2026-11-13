@@ -174,13 +174,27 @@ func TestMySQLNativeAccountCompatibility(t *testing.T) {
 			t.Fatal("cannot create isolated game compatibility database")
 		}
 		defer admin.Exec("DROP DATABASE `" + gameDatabase + "`")
+		gameUser := "mmo_test_game_" + suffix
+		gameAccount := "'" + gameUser + "'@'%'"
+		if _, err := admin.Exec("CREATE USER " + gameAccount + " IDENTIFIED BY '" + password + "'"); err != nil {
+			t.Fatal("cannot create isolated limited game user")
+		}
+		defer admin.Exec("DROP USER " + gameAccount)
+		if _, err := admin.Exec("GRANT SELECT,INSERT,UPDATE,CREATE,INDEX,REFERENCES ON `" + gameDatabase + "`.* TO " + gameAccount); err != nil {
+			t.Fatal("cannot grant isolated game permissions")
+		}
 		command := exec.Command(gameBinary, "--mysql")
-		command.Env = append(os.Environ(), "MMO_TEST_MYSQL_DATABASE="+gameDatabase)
+		command.Env = append(os.Environ(), "MMO_TEST_MYSQL_DATABASE="+gameDatabase, "MMO_TEST_MYSQL_USER="+gameUser, "MMO_TEST_MYSQL_PASSWORD="+password)
 		output, err := command.CombinedOutput()
 		if err != nil {
 			t.Fatalf("native GameService MySQL invariants failed: %s", string(output))
 		}
 		t.Log(strings.TrimSpace(string(output)))
+		limited := isolatedConnection(t, mysqlFixtureConfig(gameUser, password, host, port, gameDatabase))
+		defer limited.Close()
+		if _, err := limited.Exec("DELETE FROM roles WHERE 1=0"); err == nil {
+			t.Fatal("game fixture unexpectedly has DELETE permission")
+		}
 	}
 	if _, err := admin.Exec("CREATE USER " + account + " IDENTIFIED BY '" + password + "'"); err != nil {
 		t.Fatal("cannot create isolated limited user")

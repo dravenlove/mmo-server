@@ -2,26 +2,26 @@ FROM ubuntu:24.04 AS build
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake pkg-config libboost-system-dev libssl-dev libsqlite3-dev \
-    libmariadb-dev libcrypt-dev ca-certificates \
+    libmariadb-dev libcrypt-dev liblua5.4-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY third_party ./third_party
 COPY scene ./scene
 COPY native ./native
 RUN cmake -S native -B build/native -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-    && cmake --build build/native --parallel 2 \
-    && cmake -S scene -B build/scene -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-    && cmake --build build/scene --parallel 2
+    && cmake --build build/native --parallel 2
 
 FROM ubuntu:24.04 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libstdc++6 libboost-system1.83.0 libssl3t64 libsqlite3-0 libmariadb3 libcrypt1 ca-certificates curl \
+    libstdc++6 libboost-system1.83.0 libssl3t64 libsqlite3-0 libmariadb3 libcrypt1 liblua5.4-0 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 RUN mkdir -p /app/data && chown 10001:10001 /app/data
 COPY --from=build /src/build/native/account/native-account /usr/local/bin/
 COPY --from=build /src/build/native/game_service/native-game-service /usr/local/bin/
 COPY --from=build /src/build/native/gateway/native-gateway /usr/local/bin/
-COPY --from=build /src/build/scene/scene-server /usr/local/bin/
+COPY --from=build /src/build/native/scene-core/scene-server /usr/local/bin/
+COPY --from=build /src/build/native/room/native-worker /usr/local/bin/
+COPY scripts/gameplay /app/gameplay
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/native-gateway"]

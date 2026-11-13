@@ -1,0 +1,17 @@
+pkg_check_modules(LUA54 REQUIRED IMPORTED_TARGET "lua5.4>=5.4" "lua5.4<5.5")
+add_library(native-script script.cpp)
+target_include_directories(native-script PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_include_directories(native-script SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party")
+target_compile_features(native-script PUBLIC cxx_std_17)
+target_link_libraries(native-script PUBLIC OpenSSL::Crypto PkgConfig::LUA54)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(native-script PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+if(BUILD_TESTING)
+  add_executable(native-script-tests tests/script_tests.cpp)
+  target_link_libraries(native-script-tests PRIVATE native-script Threads::Threads)
+  add_test(NAME native-lua-planner COMMAND native-script-tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/gameplay/skills_v1.lua"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/gameplay/manifest.json")
+  set_tests_properties(native-lua-planner PROPERTIES TIMEOUT 20)
+endif()

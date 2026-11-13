@@ -2,9 +2,9 @@
 
 接手与协作入口：[项目协作记忆](docs/AGENT_MEMORY.md)，包含代码定位、协议、运行版本、证据及协作流程；agent 开始工作先读 [AGENTS.md](AGENTS.md)。
 
-开房间玩法的公开方案与演进建议见 [房间制架构参考](docs/ROOM_ARCHITECTURE_REFERENCE.md)；这是研究稿，通用房间服务尚未实施。
+开房间玩法的公开方案与演进建议见 [房间制架构参考](docs/ROOM_ARCHITECTURE_REFERENCE.md)。当前源码已实现多房间 Worker、EnTT 权威存储和受限 Lua 技能编排，接口、兼容范围及回退要求见 [Lua / ECS 房间交接](docs/ROOMS_LUA_ECS.md)；自动匹配和跨 Worker 调度仍未实现。
 
-已选路线为 [C++ 游戏服务技术栈迁移](docs/CPP_STACK_MIGRATION.md)：玩家网关与游戏业务采用 C++，Lua 玩法、ECS、Protobuf 和原生 KCP 分阶段接入，Go 主要用于运维。C++ Gateway、AccountService、GameService 首版代码位于 `native/`，见 [构建、联调与切换文档](docs/NATIVE_CPP_RUNBOOK.md)。下述默认部署仍保留原 Go + C++ 版本；新增实现不代表现网已切换。
+已选路线为 [C++ 游戏服务技术栈迁移](docs/CPP_STACK_MIGRATION.md)：玩家网关与游戏业务采用 C++，Go 主要用于运维。C++ Gateway、AccountService、GameService、多房间 Worker 和 Lua 宿主位于 `native/`，Scene 已使用 EnTT；Protobuf 与安全 KCP 入口仍是后续阶段。见 [构建、联调与切换文档](docs/NATIVE_CPP_RUNBOOK.md)。本轮房间版本尚待统一 CI 验证和镜像发布，未切换 VPS；下述原 Go + C++ 默认部署继续保留。
 
 一个可分别部署的服务端原型：Go 网关承接玩家长连接，Go Auth 管理账号，Game Backend 管理角色、场景归属和持久化，多个独立 C++ SceneHost 推进实时移动和 AOI。Linux Docker 是部署目标；同机 Compose 用于演示，多机模板位于 `deploy/`。
 
@@ -22,7 +22,7 @@ Unity WebGL 的移动与 AOI 接入见 [服务端交接协议](docs/WEBGL_MOVEME
 
 **战斗版本的玩法与两台 VPS 更新步骤见 [COMBAT.md](docs/COMBAT.md)，数值热更和在线回滚见 [配置热更 demo](docs/CONFIG_HOT_RELOAD.md)。Windows 测试已部署的服务器，优先使用 [桌面客户端](docs/DESKTOP_CLIENT.md)。** 构建后双击 `dist/desktop/MMO.Client.exe`，填写 gateway 地址，即可测试连接、登录、移动、战斗和切换场景；本机直接连接远程服务器。
 
-**当前两机部署：[游戏主机 + 鉴权后台主机](docs/GAME_AUTH_DEPLOYMENT.md)。** 游戏主机集中运行 Gateway、游戏 Backend 和 C++ 场景；资源较少的鉴权后台主机只处理注册与登录。已有客户端继续连接游戏主机原地址；VPS 拉取现成镜像，不编译源码。[全国玩家连接延迟](docs/NATIONWIDE_LATENCY.md)说明单区、线路加速与多区服的取舍。
+**原两机部署：[游戏主机 + 鉴权后台主机](docs/GAME_AUTH_DEPLOYMENT.md)。** 游戏主机集中运行 Gateway、游戏 Backend 和 C++ 场景；资源较少的鉴权后台主机只处理注册与登录。已有客户端继续连接游戏主机原地址；VPS 拉取现成镜像，不编译源码。[全国玩家连接延迟](docs/NATIONWIDE_LATENCY.md)说明单区、线路加速与多区服的取舍。C++ 迁移使用独立覆盖层；源码中的新能力不代表这张原部署表已在线变更。
 
 | 主机角色 | 运行内容 |
 | --- | --- |
@@ -30,6 +30,8 @@ Unity WebGL 的移动与 AOI 接入见 [服务端交接协议](docs/WEBGL_MOVEME
 | `auth` | Go Auth，账号注册、凭据验证及旧账号导入 |
 
 原来的 [gateway + scene 分机流程](docs/DEPLOYMENT_TWO_HOSTS.md)保留为旧拓扑参考。角色迁移保留原密钥、数据库、卷和战斗配置；不要同时启动新旧 Game Backend。
+
+房间版的 game 部署叠加 `game-host.compose.yaml`、`native-game.override.yaml`、`native-room-game.override.yaml`，保留原账号、凭据、金币和战斗存档。Auth 与其他五个 Scene 标签独立保留；新镜像需等统一 CI 发布后选择经验证标签。回退到不支持房间的 Backend 前，必须按 [房间交接文档](docs/ROOMS_LUA_ECS.md)完成 drain，将动态房间角色安全送回静态场景，不能直接换回旧镜像。
 
 ```mermaid
 flowchart LR
