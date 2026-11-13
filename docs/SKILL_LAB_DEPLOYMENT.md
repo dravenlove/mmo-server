@@ -24,6 +24,8 @@ Backend 新增场景映射 `scene-skills=http://scene-skills:9006`，所以需�
 
 具体路由见 [Caddy 模板](../deploy/ip-webgl.caddy.example)。健康检查：
 
+`Type=simple` 的 systemd 启动返回不代表端口已经监听。桥接进程的就绪检查应在最多 10 秒内短间隔重试，通过后再最后重载 Caddy 新路由。本次首次立即检查触发回退，补充有界重试后完成切换；数据库没有恢复到旧备份。
+
 ```bash
 sudo docker compose --env-file deploy/game-host.env -f deploy/game-host.compose.yaml ps
 curl --fail http://127.0.0.1:9006/healthz
