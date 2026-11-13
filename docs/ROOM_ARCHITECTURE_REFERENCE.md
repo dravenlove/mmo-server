@@ -2,7 +2,7 @@
 
 日期：2026-11-13（Asia/Shanghai）。状态：公开资料研究与设计建议，**尚未实施，不代表现网已支持创建/加入多人房间**。现有运行版本仍以 [项目协作记忆](AGENT_MEMORY.md) 为准。
 
-建议先明确为“大厅 + 房间 + 独立对局 + 长期角色数据”的房间制多人游戏；若以后需要公共城镇或持久世界，再增加地图/分线服务。本方案可以继续使用 Go + C++，也可以由纯 Go 实现，职责和状态边界不依赖具体语言。
+建议先明确为“大厅 + 房间 + 独立对局 + 长期角色数据”的房间制多人游戏；若以后需要公共城镇或持久世界，再增加地图/分线服务。用户后续已选择 C++ 玩家网关和游戏业务、Lua 玩法、Go 运维的目标，见 [C++ 技术栈迁移](CPP_STACK_MIGRATION.md)。下述房间职责按该目标描述，当前运行实现仍是旧 Go + C++。
 
 ## 1. MMO 和房间制分别解决什么
 
@@ -52,7 +52,7 @@
 ```mermaid
 flowchart LR
     C[客户端] <-->|WSS| G[统一 Gateway]
-    G <-->|账号 / 房间 / 开局| B[Go Backend：大厅与 RoomManager]
+    G <-->|账号 / 房间 / 开局| B[C++ GameService：大厅与 RoomManager]
     B -->|鉴权| A[独立 Auth]
     B -->|预留与创建| W[BattleWorker]
     G <-->|成员校验后的局内输入 / 状态| W
@@ -66,12 +66,12 @@ flowchart LR
 
 | 模块 | 负责什么 | 建议初期放在哪里 |
 | --- | --- | --- |
-| Auth | 注册、密码、登录票据 | 保留 auth 主机 |
-| 大厅 / RoomManager | 房间列表、创建/加入/退出、成员、准备、房主、开局状态机 | game 主机现有 Go Backend 内的模块 |
+| Auth | 注册、密码、登录票据 | 保留 auth 主机，按迁移阶段改为 C++ AccountService |
+| 大厅 / RoomManager | 房间列表、创建/加入/退出、成员、准备、房主、开局状态机 | game 主机目标 C++ GameService 内的模块 |
 | Allocator | 选择有容量的 Worker、预留并绑定本局、超时释放 | 初期与 RoomManager 同进程 |
 | Gateway | 连接、会话、房间成员校验、绑定 battle 路由及消息收发 | game 主机；评估收敛演示入口 |
 | BattleWorker / RoomInstance | 每局独立 Tick、角色、技能定义、弹道、墙体、怪物、事件和胜负 | game 主机，复用现有 C++ 规则 |
-| 角色 / 结算 | 长期属性、奖励、结果幂等提交 | 保留现有 Go Backend 单写入者和既有 MySQL |
+| 角色 / 结算 | 长期属性、奖励、结果幂等提交 | C++ GameService 接替现有 Go Backend，保留单写入者和既有 MySQL |
 
 玩家在对局中移动和施法只经过 Gateway / BattleWorker；不需要逐帧访问 RoomManager、Auth 或数据库。加载必要角色状态后在内存推进，结算及必要检查点通过专门提交处理。[Nakama 服务端实践](https://heroiclabs.com/docs/nakama/server-framework/introduction/best-practices/)同样强调避免在对局 Tick 中执行阻塞数据库 I/O。
 
@@ -134,7 +134,7 @@ stateDiagram-v2
 | 主机职责 | 建议承载 |
 | --- | --- |
 | auth | 现有 Auth 和账号后台 |
-| game | 统一 Gateway、现有 Backend 加房间/分配模块、先一个可托管多房间的 BattleWorker |
+| game | C++ Gateway、C++ GameService 加房间/分配模块、先一个可托管多房间的 BattleWorker |
 | 既有 MySQL | 继续原地址与凭据，按模块所有权增加必要记录 |
 
 房间/对局属于游戏业务，初期继续放 game 主机，避免把实时数据重新放到跨地域 auth 链路。一个 BattleWorker 是初期组织建议，具体可容纳多少房间必须依据 Tick、实体数、技能密度和网络字节测量。
@@ -152,8 +152,8 @@ stateDiagram-v2
 | 现有能力 | 下一步拟议调整 |
 | --- | --- |
 | Auth、会话和角色存档 | 原样保留账号及数据兼容，增加入场授权与对局绑定 |
-| `internal/backend` 的角色/归属/迁移/奖励 | 增加 RoomManager、开局状态机、分配及对局结果幂等记录，仍只有一个业务写入者 |
-| `internal/gateway` 的会话路由和状态推送 | 增加成员与 battle 路由，明确退出和重连状态；评估收敛五套演示网关 |
+| `internal/backend` 的角色/归属/迁移/奖励 | 迁入 C++ GameService，再增加 RoomManager、开局状态机、分配及对局结果幂等记录，仍只有一个业务写入者 |
+| `internal/gateway` 的会话路由和状态推送 | 迁入 C++ Gateway，增加成员与 battle 路由，明确退出和重连状态；评估收敛五套演示网关 |
 | C++ Scene 的移动、AOI、技能和碰撞 | 改造成 BattleWorker 管理独立 RoomInstance；逐局隔离容器内的实体、事件、弹道和墙体等状态 |
 | `elemental` 有个人试炼实例 | 复用其隔离思路；仍需通用多人组房、准备、开局、重连和回收 |
 | Unity 有登录/移动/战斗协议接入基础 | 房间列表、成员/准备、载入及结算界面需要客户端负责人按新契约接入 |
