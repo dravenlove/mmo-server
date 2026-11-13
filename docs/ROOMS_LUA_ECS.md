@@ -48,6 +48,10 @@ Auth 只处理账号，实时房间留在 game。Go 旧服务和 CLI 保留作�
 
 收到 room_id 后发送 join，再 ready/start。join/leave 回执沿用角色 JSON；`view/state` 顶层增加 `room` 元数据，包含 `room_id,state,host_role_id,members,script_version,script_sha256,world_epoch,revision`。`lobby` 可观察、注册技能和准备，移动/施法在开局前拒绝；`playing` 推进原战斗；`finished` 停止战斗，允许安全离开和存档确认。客户端若做组房 UI，需要自行处理这些新增命令；旧客户端兼容不等于已有组房 UI。
 
+当前 Unity 客户端 `36681c4` 没有 `room_*` API/UI；它仍会在在线时自动发送移动心跳，等待开局阶段的 409 会被视为连接故障。因此组房适配必须在迁入前停止并排空旧输入，lobby/finished 暂停游戏输入及移动心跳，保持状态接收、连接心跳和房间控制通道，playing 后恢复输入。其 `AoiWorld` 还会丢弃已退休世界：离房返回相同大厅进程时，当前客户端需以新 Session 重新登录、清空旧缓存；正式房间 API 应在可信迁移回执中整合此过程。不能只替换场景地址就声称原界面支持组房。2026-11-13 实际 C# 及协议验收范围另见 [联调报告](INTEGRATION_20261113.md)。
+
+结束房间后 Backend 可自动把角色送回大厅；若 Gateway 尚未采用新 owner，紧随其后的 leave 可能暂时返回 `room owner changed`。应刷新路由并用相同 request_id 有界重试；不要改 ID 反复提交迁移。已经回大厅时，可省略旧 room_id 取得当前路由，或先查明当前场景后再决定是否需要 leave。
+
 ## Lua 技能执行
 
 保留原 `skill_init`：客户端提交合法技能 ID 与完整弹道/墙体参数，C++ 校验范围和版本。`cast` 的执行顺序为：
@@ -79,7 +83,7 @@ sudo python3 scripts/room_admin.py status --env-file deploy/game-host.env
 
 工具只读取私有 env 中的 INTERNAL_TOKEN，不放进命令参数或输出，也不跟随重定向。reload 仅从服务器已配置的 manifest 读取；现有房间保持旧脚本，后来创建的房间使用新脚本。动态房间拒绝中途修改 combat config，默认兼容场景保留原数值热更接口。没有宣称活动对局内任意代码热换。
 
-Worker 重启后，目录仍在原数据库，Backend 按原版本与 SHA 重建房间、恢复已存角色；临时弹道、墙体、准备状态与未存战斗进度不作完整恢复。每角色绑定房间世界代次，重建后旋转会话，迟到的旧移动、施法和检查点不能写入新世界；Backend 控制请求另带私有世界围栏。客户端看到新 world_epoch 后按旧协议重新读取状态与初始化技能。房间重新回到 lobby，需要再次准备开局；不是整局无损高可用。
+Worker 重启后，目录仍在原数据库，Backend 按原版本与 SHA 重建房间、恢复已存角色；临时弹道、墙体、准备状态与未存战斗进度不作完整恢复。每角色绑定房间世界代次，重建后旋转会话，迟到的旧移动、施法和检查点不能写入新世界；Backend 控制请求另带私有世界围栏。当前 C# 客户端严格校验登录时的 session_epoch，不能透明采用服务器旋转后的会话：需要关闭旧连接、用已有凭据重新 login，收到新角色会话与 world_epoch 后清空旧动作及表现，再读取状态、初始化技能、准备和开局。房间重新回到 lobby；不是整局无损高可用。
 
 ## 存档、回收与回退
 
