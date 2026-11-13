@@ -329,21 +329,29 @@ private:
             if (!route.is_null()) throw Failure("already logged in; reconnect to log in again");
             auto result=http_.call(config_.backend_url,"/v1/login",{{"token",request.value("token",std::string())}},20);
             route=require_route(result);
-            if (!config_.login_scene.empty() && route["role"].value("scene_id",std::string())!=config_.login_scene && !(config_.profile=="elemental" && route["role"]["scene_id"]==config_.arena_scene)) {
-                auto body=reference(route["role"]); body["target_scene_id"]=config_.login_scene;
-                body["request_id"]="entry-"+route["role"]["role_id"].get<std::string>()+"-"+std::to_string(route["role"]["session_epoch"].get<std::int64_t>());
-                result=http_.call(config_.backend_url,"/v1/transfer",body,20);
-                route=require_route(result);
-            }
-            if (config_.profile=="elemental" && route["role"]["scene_id"]==config_.arena_scene) {
-                auto initial=http_.call(route["scene_url"],"/v1/view",reference(route["role"]));
-                if (initial.error) { initial.established_route=route; return initial; }
-                if (!initial.value.is_object() || !same_role(initial.value.value("self",Json()),route["role"])) {
-                    Result invalid(nullptr,Failure("invalid service response")); invalid.established_route=route; return invalid;
+            // 后续任何步骤失败，都保留最后一份已验证归属；超时不推测迁移是否提交。
+            Json established=route;
+            try {
+                if (!config_.login_scene.empty() && route["role"].value("scene_id",std::string())!=config_.login_scene && !(config_.profile=="elemental" && route["role"]["scene_id"]==config_.arena_scene)) {
+                    auto body=reference(route["role"]); body["target_scene_id"]=config_.login_scene;
+                    body["request_id"]="entry-"+route["role"]["role_id"].get<std::string>()+"-"+std::to_string(route["role"]["session_epoch"].get<std::int64_t>());
+                    result=http_.call(config_.backend_url,"/v1/transfer",body,20);
+                    auto next=require_route(result);
+                    if (next["role"]["role_id"]!=route["role"]["role_id"] || next["role"]["session_epoch"]!=route["role"]["session_epoch"] || next["role"]["scene_id"]!=config_.login_scene || next["role"]["owner_epoch"].get<std::int64_t>()<=route["role"]["owner_epoch"].get<std::int64_t>()) throw Failure("invalid entry ownership transition");
+                    route=std::move(next); established=route;
                 }
-                result.value["initial_view"]=std::move(initial.value);
+                if (config_.profile=="elemental" && route["role"]["scene_id"]==config_.arena_scene) {
+                    auto initial=http_.call(route["scene_url"],"/v1/view",reference(route["role"]));
+                    if (initial.error) throw *initial.error;
+                    if (!initial.value.is_object() || !same_role(initial.value.value("self",Json()),route["role"])) throw Failure("invalid service response");
+                    result.value["initial_view"]=std::move(initial.value);
+                }
+                return result;
+            } catch (const Failure& error) {
+                Result failed(nullptr,error); failed.established_route=std::move(established); return failed;
+            } catch (...) {
+                Result failed(nullptr,Failure("invalid service response")); failed.established_route=std::move(established); return failed;
             }
-            return result;
         }
         if (route.is_null()) throw Failure("login required");
         if (config_.profile=="elemental" && (op=="cast" || op=="enter_arena" || op=="leave_arena" || op=="restart_battle")) return perform_elemental(request,route);

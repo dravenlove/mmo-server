@@ -21,6 +21,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   verify:
+    # 此迁移分支的push已执行同一套检查及发布，避免PR再次重复整套构建。
+    if: github.event_name != 'pull_request' || github.head_ref != 'codex/cpp-stack-migration'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:

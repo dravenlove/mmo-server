@@ -36,6 +36,8 @@ class Fixture:
         self.session_status = 200
         self.changing = False
         self.statuses = {}
+        self.overrides = {}
+        self.transfer_error_commits = False
         self.scene = self.server("scene")
         self.backend = self.server("backend")
 
@@ -74,7 +76,15 @@ class Fixture:
                 if delay:
                     time.sleep(delay)
                 if self.path in fixture.statuses:
+                    if kind == "backend" and self.path == "/v1/transfer" and fixture.transfer_error_commits:
+                        with fixture.lock:
+                            fixture.role["scene_id"] = body["target_scene_id"]
+                            fixture.role["owner_epoch"] += 1
+                            fixture.changing = False
                     self.respond(fixture.statuses[self.path], {"error": "isolated fault injection"})
+                    return
+                if self.path in fixture.overrides:
+                    self.respond(200, fixture.overrides[self.path])
                     return
                 if kind == "backend":
                     if self.path in ("/v1/login", "/v1/session"):
@@ -107,8 +117,9 @@ class Fixture:
                         self.respond(404, {"error": "unknown backend route"})
                 else:
                     assert body["role_id"] == role["role_id"]
-                    assert body["owner_epoch"] == role["owner_epoch"]
-                    assert body["session_epoch"] == role["session_epoch"]
+                    if body["owner_epoch"] != role["owner_epoch"] or body["session_epoch"] != role["session_epoch"]:
+                        self.respond(409, {"error": "stale owner or session"})
+                        return
                     if self.path == "/v1/view":
                         if fixture.changing:
                             self.respond(409, {"error": "role is not active"})
@@ -246,7 +257,7 @@ class Client:
 
 
 class Gateway:
-    def __init__(self, executable, fixture, profile, state_hz=20):
+    def __init__(self, executable, fixture, profile, state_hz=20, login_scene=None):
         self.tcp, self.ws, self.health = port(), port(), port()
         env = {**os.environ, "INTERNAL_TOKEN": SECRET, "BACKEND_URL": fixture.backend_url,
                "GATEWAY_LISTEN": f"127.0.0.1:{self.tcp}", "WEBSOCKET_LISTEN": f"127.0.0.1:{self.ws}",
@@ -254,6 +265,8 @@ class Gateway:
                "GATEWAY_STATE_HZ": str(state_hz), "WEBSOCKET_ALLOWED_ORIGINS": ORIGIN,
                "GATEWAY_LOGIN_SCENE": "scene-test" if profile == "elemental" else "",
                "GATEWAY_ARENA_SCENE": "scene-arena" if profile == "elemental" else ""}
+        if login_scene is not None:
+            env["GATEWAY_LOGIN_SCENE"] = login_scene
         env.pop("TLS_CERT_FILE", None)
         env.pop("TLS_KEY_FILE", None)
         self.process = subprocess.Popen([executable], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -455,6 +468,49 @@ def main(executable):
         wait_until(lambda: bool(fixture.disconnects), "successful arena entry leaked after initial-view failure")
         wait_until(lambda: bool(fixture.saved), "partially successful login did not save final authoritative state")
         assert fixture.disconnects[-1] == dict(role_id="controlled-player", owner_epoch=3, session_epoch=7)
+        checks += 3
+    finally:
+        client.close()
+        gateway.close()
+        fixture.close()
+    for committed in (False, True):
+        fixture = Fixture()
+        fixture.role["scene_id"] = "scene-origin"
+        fixture.statuses["/v1/transfer"] = 503
+        fixture.transfer_error_commits = committed
+        gateway = Gateway(executable, fixture, "movement", login_scene="scene-test")
+        client = Client(gateway.ws, ws=True)
+        try:
+            failed = client.exchange("login", token="old-token")
+            assert not failed["ok"] and failed["status"] == 503
+            retry = client.exchange("login", token="old-token")
+            assert not retry["ok"] and "already logged in" in retry["error"]
+            assert len([call for call in fixture.calls if call[:2] == ("backend", "/v1/login")]) == 1
+            client.close()
+            wait_until(lambda: any(call[1] == "/v1/disconnect" for call in fixture.calls), "forced-entry transfer failure discarded established login")
+            cleanup = [call[2] for call in fixture.calls if call[1] == "/v1/disconnect"][-1]
+            assert cleanup == dict(role_id="controlled-player", owner_epoch=3, session_epoch=7)
+            if committed:
+                assert fixture.role["owner_epoch"] == 4 and fixture.role["scene_id"] == "scene-test"
+                assert not fixture.disconnects and not fixture.saved, "uncertain transfer cleanup touched a newer owner"
+            else:
+                wait_until(lambda: bool(fixture.saved), "forced-entry failure did not save final source state")
+                assert fixture.disconnects[-1] == cleanup
+            checks += 3
+        finally:
+            client.close()
+            gateway.close()
+            fixture.close()
+    fixture = Fixture()
+    fixture.role["scene_id"] = "scene-arena"
+    fixture.overrides["/v1/view"] = []
+    gateway = Gateway(executable, fixture, "elemental")
+    client = Client(gateway.ws, ws=True)
+    try:
+        failed = client.exchange("login", token="old-token")
+        assert not failed["ok"] and failed["error"] == "invalid service response"
+        client.close()
+        wait_until(lambda: bool(fixture.disconnects) and bool(fixture.saved), "malformed initial view lost established arena session")
         checks += 3
     finally:
         client.close()

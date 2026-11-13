@@ -31,6 +31,8 @@ flowchart LR
 
 ## 构建与验证
 
+迁移源码位于 `codex/cpp-stack-migration`，审阅入口是 [PR #1](https://github.com/dravenlove/mmo-server/pull/1)。尚未合并时，`main` 不包含这些文件。新目录可直接 `git clone --branch codex/cpp-stack-migration https://github.com/dravenlove/mmo-server.git mmo-server-cpp`；已有目录先核对 `git status`，再 fetch/switch 对应分支，不覆盖本地修改或私有 env。
+
 新服务目标环境为 Linux amd64。Windows 使用 Docker 的 Linux 引擎或独立 Ubuntu WSL 环境。C++17、Boost 1.83（Ubuntu 24.04）、OpenSSL 3、SQLite3、MariaDB Connector/C 与 libcrypt；Connector/C 只是客户端库，服务端仍要求 MySQL >= 8.0.16，拒绝 MariaDB Server。现有 JSON/HTTP 头文件仍由 `third_party/README.md` 固定。
 
 Ubuntu 构建机安装依赖后运行：
