@@ -231,3 +231,4 @@ Windows 使用 `scripts/build.ps1` 和带 `-C Release` 的 CTest。真实规则/
 - 已修复并新增回归：所有权切换时不能查询冻结源；慢显式 view 不能回退较新状态/最终存档；Elemental 登录部分成功后必须保留精确路由完成断开清理。后续重构异步通道时保留这些用例。
 - 新限制：直连 TCP TLS 暂不在 C++ Gateway 内终止，原证书变量非空时拒绝启动，不能清空变量降级；MySQL 库名要求 ASCII，localhost 强制 TCP 并尊重 MYSQL_PORT。旧 Go Auth 的 SQLite 锁不等价，必须串行停启。
 - 本次尚未切换两台 VPS、未重启旧场景、未改 Unity 客户端。Lua/ECS 房间、Protobuf、安全 KCP、Redis/集群仍属于后续阶段；Go 旧服务代码保留为回归对照和回退材料。
+- 首个已验证核心候选镜像为 `ghcr.io/dravenlove/mmo-server/backend:cpp-core-20b17dbaf793`，revision `20b17dbaf7937cf935fb1dac130ed3691dd90af2`，digest `sha256:3bfea5e02734378867fbcf5e80c25b170f361f2245b6909745fec405efd62915`。[Linux CI 43407338371](https://github.com/dravenlove/mmo-server/actions/runs/43407338371) 全部通过，包含普通用户完整容器链路、新卷、匿名 Docker 拉取；另有 Windows 匿名 manifest/config 核对。它是候选发布，**不是已上线版本**。新源码位于 `codex/cpp-stack-migration` / [PR #1](https://github.com/dravenlove/mmo-server/pull/1)，未合并前 main 没有新服务文件；纯文档后续提交不代表镜像 revision 改变。

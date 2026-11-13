@@ -15,7 +15,9 @@
 - 独立 MySQL **8.0.46** 通过：原 Go `$2a$` 密码和票据由 C++ 接管，C++ `$2b$10$` 哈希由 Go 验证，永久 token 与稳定身份保持，最小权限账号没有 DELETE 也能轮换五票据，双方竞争同一原命名锁。静止 UPDATE 匹配行数、KILL 原固定连接后旧 writer 永久停止写入、新 writer 接锁及完整 Backend MySQL 不变量通过；`localhost` 使用配置的 TCP 端口，不误连默认 Unix socket。
 - Go 创建的完整旧 SQLite 库由 C++ 接管，恢复未决 COMMITTED 迁移，保留角色 ID、永久 token、100 金币、战斗快照及幂等奖励。没有重新注册或重新散列已有身份。
 - 跨模块审查发现并修复三类异步问题：迁移中自动查询冻结源；慢显式 view 覆盖较新自动状态并导致最终存档回退；Elemental 登录已入场但初始 view 失败时漏 disconnect。分别增加竞态与失败响应夹具，包含旧 revision 1 与新 revision 9 交错后最终仍保存 9 的验证。
-- 原 Go 全套 `go test ./...` 通过。三份新增 Compose（本地与 game/auth override）使用合成配置完成离线解析；本机 env 初始化验证不覆盖已有配置。新 Linux 镜像及容器卷权限由 `Native C++ stack` CI 继续验证；发布结果以当次工作流及镜像 revision 为准。
+- 原 Go 全套 `go test ./...` 通过。三份新增 Compose（本地与 game/auth override）使用合成配置完成实际合并检查：新 image/entrypoint、清除旧 Go build、保留原场景/数据卷/TLS、四个回环 WS 端口及完整 tmpfs 选项；本机 env 初始化不覆盖已有配置。另以 UID/GID 10001、清空附加组完成四 profile 原生进程联调。
+
+[完整 Linux CI 43407338371](https://github.com/dravenlove/mmo-server/actions/runs/43407338371) 对源码 `20b17dbaf7937cf935fb1dac130ed3691dd90af2` 全部通过：上述回归、Release 运行镜像、普通用户容器与新 SQLite 卷、真实 C++ WS→GameService→Auth→Scene 的账号/移动/参数化施法，以及匿名 Docker 拉取。已发布 `ghcr.io/dravenlove/mmo-server/backend:cpp-core-20b17dbaf793`，digest `sha256:3bfea5e02734378867fbcf5e80c25b170f361f2245b6909745fec405efd62915`；Windows 客户机再以匿名 registry token 读取 manifest/config，确认 linux/amd64、原生 Gateway 入口及相同 revision。发布复用既有公开 backend 包，使用独立 C++ 标签，旧 Go 标签未覆盖。
 
 这些是隔离进程/数据库的结果，不是 VPS 更新、真实 Unity 画面、全国网络或容量验收。尚未实现 Lua/ECS 房间、新 Protobuf 和安全 KCP；原生 TCP 直连 TLS 暂需受信任代理，不能清空证书变量降级。现网仍按下面已有运行快照管理。
 

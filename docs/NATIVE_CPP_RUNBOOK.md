@@ -2,6 +2,10 @@
 
 日期：2026-11-13。此版本实现 C++ Gateway、AccountService 和 GameService，复用既有 C++ Scene。旧 Go 代码保留为回归对照与回退材料。**本文的源代码实现不代表现网已切换；运行版本仍需读取容器 revision。**
 
+已发布 Linux amd64 候选镜像：`ghcr.io/dravenlove/mmo-server/backend:cpp-core-20b17dbaf793`。源码 revision 为 `20b17dbaf7937cf935fb1dac130ed3691dd90af2`，当次 digest 为 `sha256:3bfea5e02734378867fbcf5e80c25b170f361f2245b6909745fec405efd62915`。[Linux CI 43407338371](https://github.com/dravenlove/mmo-server/actions/runs/43407338371) 已通过构建、完整回归、普通用户容器/新卷联调和匿名拉取；另从 Windows 客户机匿名读取 manifest/config，确认同一 revision 与平台。后续纯文档提交不改变此镜像的源码版本。
+
+两台 VPS 的**原私有 env** 只新增 `MMO_NATIVE_IMAGE_TAG=cpp-core-20b17dbaf793`，不要改原场景和 Go 回退标签。先按本文维护流程备份、停旧写入者再切换，不能把拉取镜像视为已上线。
+
 ## 本次范围
 
 ```mermaid
@@ -69,6 +73,8 @@ curl --fail http://127.0.0.1:18080/readyz
 ```
 
 测试 WebSocket：`ws://127.0.0.1:17001/ws`；TCP：`127.0.0.1:17000`。这是回环地址上的独立 skill_lab 场景与两个 SQLite 测试卷，不使用 VPS 原账号。HTTPS 网页不能连接明文 ws；真实 HTTPS/WebGL 验收仍经可信 TLS。停止使用 `down` 即可，不默认删除测试卷。
+
+也可直接使用上述已发布镜像，省去本机构建：保留初始化生成的密钥与 Origin，在 `deploy/native-local.env` 设置 `MMO_IMAGE_PREFIX=ghcr.io/dravenlove/mmo-server`、`MMO_NATIVE_IMAGE_NAME=backend`、`MMO_NATIVE_IMAGE_TAG=cpp-core-20b17dbaf793`，然后执行同一 Compose 的 `pull` 与 `up -d --no-build --pull never --wait`。四个本机服务共用这一镜像；不要连接真实业务库进行本机试验。
 
 ## 两台 VPS 切换规则
 
